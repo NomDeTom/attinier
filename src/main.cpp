@@ -4,6 +4,7 @@
 #include "analog_util.h"
 #include "battery_config.h"
 #include "bq25798.h"
+#include "ina3221_subordinate.h"
 #include "monotonic_millis.h"
 
 namespace {
@@ -40,6 +41,17 @@ const BatteryProfile *currentProfile   = nullptr;
 uint64_t              lastAdcPollMs    = 0;
 uint64_t              lastI2CPollMs    = 0;
 
+#ifdef attiny816
+
+constexpr uint8_t  kSoftStartPin          = PIN_PB5;           // PB5, physical 9
+constexpr uint8_t  kSoftStartMonitorPin  = PIN_PB4;           // PB4, physical 10
+constexpr uint8_t  kSoftBusMonitorPin          = PIN_PB3;           // PB3, physical 11
+constexpr uint8_t  kOutputEnablePin  = PIN_PB2;           // PB2, physical 12
+
+#endif
+
+
+
 // Write charge voltage and cutoff/reinstate thresholds to the charger for the current profile.
 void configureBattery() {
   if (currentProfile == nullptr) {
@@ -67,6 +79,26 @@ void measureVoltage() {
   // BatteryLow: in hysteresis zone, do not change cutoff pin state
 }
 
+// Monitor softstart pin based on bus monitor vs softstart monitor voltage comparison.
+// If softstart monitor is <90% of bus monitor, softstart pin is set to HiZ (high impedance).
+// Otherwise, softstart pin is held LOW.
+void monitorSoftStartPin() {
+#ifdef attiny816
+  const uint16_t vcc  = readVcc();
+  // Positive when softstart monitor lags behind bus monitor
+  const int16_t diff  = readVoltage(kSoftBusMonitorPin, kSoftStartMonitorPin, vcc);
+
+  if (diff > 10) {
+    // Softstart monitor is below 90% of bus monitor: set to HiZ (high impedance)
+    pinMode(kSoftStartPin, INPUT);
+  } else {
+    // Softstart monitor is at or above 90% of bus monitor: hold LOW
+    pinMode(kSoftStartPin, OUTPUT);
+    digitalWrite(kSoftStartPin, LOW);
+  }
+#endif
+}
+
 } // namespace
 
 void setup() {
@@ -76,9 +108,21 @@ void setup() {
   pinMode(kCutoffPin, OUTPUT);
   digitalWrite(kCutoffPin, LOW);
 
+#ifdef attiny816
+  Wire.swap(1); // Route TWI to alternate pins: SDA=PA1 (PIN_WIRE_SDA_PINSWAP_1), SCL=PA2 (PIN_WIRE_SCL_PINSWAP_1)
+#endif
+
   Wire.begin();
   Wire.setClock(100000);
   charger.begin(Wire);
+
+#ifdef INA3221_EMULATOR
+  charger.enableAdc(true); // Enable BQ25798 continuous ADC for INA3221 channel data
+  // Enable subordinate mode on the same TWI module (dual master+subordinate).
+  Wire.begin(kSubordinateI2cAddress);
+  Wire.onReceive(onSubordinateReceive);
+  Wire.onRequest(onSubordinateRequest);
+#endif
 
   // Read chemistry selector, load profile, and configure charger
   currentChemistry = BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
@@ -105,6 +149,9 @@ void loop() {
 
     // MeasureVoltage
     measureVoltage();
+
+    // Monitor softstart pin
+    monitorSoftStartPin();
   }
 
   // I2C poll: charger check every 2 seconds
@@ -118,5 +165,8 @@ void loop() {
     charger.setVacOvp(BQ25798_VAC_OVP_26V); // Sets VAC OVP bits; uses updateRegister8() internally
     charger.enableMppt(true);               // Enables MPPT; uses updateRegister8() internally
     charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000)); // Checks then writes if different
+#ifdef INA3221_EMULATOR
+    updateIna3221Registers(charger);
+#endif
   }
 }

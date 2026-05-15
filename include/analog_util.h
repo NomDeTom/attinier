@@ -28,6 +28,16 @@ inline uint16_t readVoltage(uint8_t pin, uint16_t vccMillivolts) {
   return static_cast<uint16_t>((static_cast<uint32_t>(adcValue) * vccMillivolts) / 1023u);
 }
 
+// Read two analog pins and return the signed percentage difference: (pinA - pinB) * 100 / pinA.
+// Returns 0 if pinA reads zero. vccMillivolts: supply voltage in mV (must match the ADC reference).
+inline int16_t readVoltage(uint8_t pinA, uint8_t pinB, uint16_t vccMillivolts) {
+  const uint16_t a = readVoltage(pinA, vccMillivolts);
+  if (a == 0) return 0;
+  const uint16_t b = readVoltage(pinB, vccMillivolts);
+  return static_cast<int16_t>((static_cast<int32_t>(a) - static_cast<int32_t>(b)) * 100 /
+                               static_cast<int32_t>(a));
+}
+
 // Measure VCC by reading the 1.1V internal bandgap reference with VCC as the ADC reference.
 // Accuracy is limited by bandgap tolerance (~±10%), sufficient for voltage threshold comparisons.
 inline uint16_t readVcc() {
