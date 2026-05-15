@@ -25,20 +25,20 @@ namespace {
 //        6  PA6       2      A6     (GPIO / ADC)
 //        7  PA7       3      A7     (GPIO / ADC), CLKOUT
 
-constexpr uint8_t kI2cSdaPin = PIN_WIRE_SDA;          // PA1, physical 4
-constexpr uint8_t kI2cSclPin = PIN_WIRE_SCL;          // PA2, physical 5
-constexpr uint8_t kChemistrySelectPin = A3;            // PA3, physical 6
-constexpr uint64_t I2CPollIntervalMs = 2000;        // Poll charger every 2 seconds to refresh watchdog and check for faults  
-constexpr uint64_t ADCPollIntervalMs = 250;       // Poll battery voltage every 250ms to react to changes and maintain cutoff state
-constexpr uint8_t kCutoffPin = A7;                    // PA7, physical 3
-constexpr uint8_t kBatteryMonitorPin = A6;             // PA6, physical 2
+constexpr uint8_t  kI2cSdaPin          = PIN_WIRE_SDA; // PA1, physical 4
+constexpr uint8_t  kI2cSclPin          = PIN_WIRE_SCL; // PA2, physical 5
+constexpr uint8_t  kChemistrySelectPin = A3;           // PA3, physical 6
+constexpr uint64_t I2CPollIntervalMs   = 2000;         // Poll charger every 2 seconds
+constexpr uint64_t ADCPollIntervalMs   = 250;          // Poll battery voltage every 250ms
+constexpr uint8_t  kCutoffPin          = A7;           // PA7, physical 3
+constexpr uint8_t  kBatteryMonitorPin  = A6;           // PA6, physical 2
 
-Bq25798 charger;
-MonotonicMillis uptime;
-BatteryChemistry currentChemistry = BatteryChemistry::TrueDefault;
-const BatteryProfile* currentProfile = nullptr;
-uint64_t lastAdcPollMs = 0;
-uint64_t lastI2CPollMs = 0;
+Bq25798               charger;
+MonotonicMillis       uptime;
+BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
+const BatteryProfile *currentProfile   = nullptr;
+uint64_t              lastAdcPollMs    = 0;
+uint64_t              lastI2CPollMs    = 0;
 
 // Write charge voltage and cutoff/reinstate thresholds to the charger for the current profile.
 void configureBattery() {
@@ -55,7 +55,7 @@ void measureVoltage() {
   if (currentProfile == nullptr) {
     return;
   }
-  const uint16_t vcc = readVcc();
+  const uint16_t vcc     = readVcc();
   const uint16_t voltage = readVoltage(kBatteryMonitorPin, vcc);
   if (voltage >= currentProfile->reinstateVoltage) {
     // BatteryOK: normal operation
@@ -67,7 +67,7 @@ void measureVoltage() {
   // BatteryLow: in hysteresis zone, do not change cutoff pin state
 }
 
-}  // namespace
+} // namespace
 
 void setup() {
   (void)kI2cSdaPin;
@@ -81,9 +81,8 @@ void setup() {
   charger.begin(Wire);
 
   // Read chemistry selector, load profile, and configure charger
-  currentChemistry = BatteryProfiles::selectChemistryByLevel(
-      readVoltageLevel(kChemistrySelectPin));
-  currentProfile = BatteryProfiles::getProfile(currentChemistry);
+  currentChemistry = BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
+  currentProfile   = BatteryProfiles::getProfile(currentChemistry);
   configureBattery();
 }
 
@@ -95,11 +94,11 @@ void loop() {
     lastAdcPollMs = now;
 
     // ReadChemistry
-    BatteryChemistry selected = BatteryProfiles::selectChemistryByLevel(
-        readVoltageLevel(kChemistrySelectPin));
+    BatteryChemistry selected =
+        BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
     if (selected != currentChemistry) {
       currentChemistry = selected;
-      currentProfile = BatteryProfiles::getProfile(currentChemistry);
+      currentProfile   = BatteryProfiles::getProfile(currentChemistry);
       // ConfigureBattery
       configureBattery();
     }
@@ -113,11 +112,11 @@ void loop() {
     lastI2CPollMs = now;
 
     // CheckCharger (all operations check-then-write: read current value, only update if changed)
-    charger.disableWatchdog();  // Clears watchdog bits; uses updateRegister8() internally
+    charger.disableWatchdog(); // Clears watchdog bits; uses updateRegister8() internally
     // Valid settings: BQ25798_VAC_OVP_26V, BQ25798_VAC_OVP_22V,
     //                 BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
-    charger.setVacOvp(BQ25798_VAC_OVP_26V);  // Sets VAC OVP bits; uses updateRegister8() internally
-    charger.enableMppt(true);  // Enables MPPT; uses updateRegister8() internally
-    charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000));  // Checks then writes if different
+    charger.setVacOvp(BQ25798_VAC_OVP_26V); // Sets VAC OVP bits; uses updateRegister8() internally
+    charger.enableMppt(true);               // Enables MPPT; uses updateRegister8() internally
+    charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000)); // Checks then writes if different
   }
 }
