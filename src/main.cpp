@@ -114,4 +114,5 @@ void loop() {
   //                 BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
   charger.setVacOvp(BQ25798_VAC_OVP_26V);
   charger.enableMppt(true);
+  charger.writeRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, BQ25798_VSYSMIN_MV(3000));
 }
