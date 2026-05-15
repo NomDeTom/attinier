@@ -79,8 +79,7 @@ void setup() {
   charger.begin(Wire);
 
   // Set minimal system voltage to 3V
-  // REG00: Value = (3000mV - 2500mV) / 250mV = 2
-  charger.writeRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, 0x02);
+  charger.writeRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, BQ25798_VSYSMIN_MV(3000));
 
   // Read chemistry selector, load profile, and configure charger
   currentChemistry = BatteryProfiles::selectChemistryByLevel(

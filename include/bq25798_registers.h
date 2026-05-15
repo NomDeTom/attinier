@@ -70,6 +70,17 @@
 #define BQ25798_REG_DPDM_DRIVER 0x47                   // DPDM Driver
 #define BQ25798_REG_PART_INFORMATION 0x48              // Part Information
 
+// ── REG00: Minimal_System_Voltage (0x00) ───────────────────────────────────
+//
+// Bits 5:0 — VSYSMIN_5:0
+//   Range  : 2500 mV – 16000 mV, step 250 mV, clamped high.
+//   Formula: V = 2500 mV + register_value * 250 mV
+//   POR    : determined at power-on by PROG pin resistance (1S=3.5V, 2S=7V, 3S=9V, 4S=12V)
+//   Reset by: REG_RST
+//
+/** @brief Convert millivolts to VSYSMIN register value (bits 5:0 of REG00). Range 2500–16000 mV, step 250 mV. */
+#define BQ25798_VSYSMIN_MV(mv) ((uint8_t)(((mv) - 2500u) / 250u))
+
 /*!
  * @brief Battery voltage threshold for precharge to fast charge transition
  * @note BQ25798_REG_PRECHARGE_CONTROL (0x08), bits 3:2
