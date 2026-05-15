@@ -153,6 +153,21 @@ class Bq25798 {
                            enabled ? BQ25798_MPPT_EN_BIT : 0u);
   }
 
+  bool setMinimalSystemVoltage(uint8_t value) const {
+    // Set VSYSMIN (bits 5:0 of REG00) only if different.
+    uint8_t current = 0;
+    if (!readRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, current)) {
+      return false;
+    }
+    // Check if bits 5:0 already match (ignore bits 7:6 which are reserved).
+    if ((current & 0x3F) == (value & 0x3F)) {
+      return true;  // Already set correctly.
+    }
+    // Update: preserve reserved bits 7:6, write new bits 5:0.
+    return writeRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE,
+                          (current & 0xC0) | (value & 0x3F));
+  }
+
   bool readStatus(Status& status) const {
     if (!readRegister8(BQ25798_REG_CHARGER_STATUS_0, status.chargerStatus0) ||
         !readRegister8(BQ25798_REG_CHARGER_STATUS_1, status.chargerStatus1) ||
