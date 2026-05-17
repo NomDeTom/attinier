@@ -5,48 +5,93 @@
 #include "battery_config.h"
 #include "bq25798.h"
 #include "ina3221_subordinate.h"
-#include "monotonic_millis.h"
 
 namespace {
 
 // ATtiny412 pinmap (SOIC-8 / megaTinyCore)
 //
-//              ┌────────┐
-//   VCC    1 ──┤        ├── 8   PA0  Arduino 0  UPDI / AIN0
-//   PA6    2 ──┤        ├── 7   GND
-//   PA7    3 ──┤        ├── 6   PA3  Arduino 3  SCK  / AIN3
-//   PA1    4 ──┤        ├── 5   PA2  Arduino 2  MISO / RXD / AIN2
-//              └────────┘
+//                          ┌────────┐
+//               VCC    1 ──┤        ├── 8   GND
+// DAC/AIN6  0~  PA6    2 ──┤        ├── 7   PA3  4~  SCK/CLKI/AIN3
+//     AIN7  1~  PA7    3 ──┤        ├── 6   PA0   5  UPDI/AIN0
+// SDA/AIN1  2~  PA1    4 ──┤        ├── 5   PA2  3~  SCL/AIN2
+//                          └────────┘
 //
 //  Arduino  Port  Physical  Analog  Alt functions
-//        0  PA0       8      A0     UPDI (reserved for programming)
-//        1  PA1       4      A1     SDA (Wire), TXD, MOSI
-//        2  PA2       5      A2     SCL (Wire), RXD, MISO
-//        3  PA3       6      A3     SCK, EXTCLK
-//        6  PA6       2      A6     (GPIO / ADC)
-//        7  PA7       3      A7     (GPIO / ADC), CLKOUT
+//       0~  PA6       2      A6     DAC
+//       1~  PA7       3      A7     (GPIO / ADC)
+//       2~  PA1       4      A1     SDA (Wire)
+//       3~  PA2       5      A2     SCL (Wire), async INT
+//       4~  PA3       7      A3     SCK, CLKI (ext clock)
+//        5  PA0       6      A0     UPDI (reserved for programming)
 
 constexpr uint8_t  kI2cSdaPin          = PIN_WIRE_SDA; // PA1, physical 4
 constexpr uint8_t  kI2cSclPin          = PIN_WIRE_SCL; // PA2, physical 5
-constexpr uint8_t  kChemistrySelectPin = A3;           // PA3, physical 6
-constexpr uint64_t I2CPollIntervalMs   = 2000;         // Poll charger every 2 seconds
-constexpr uint64_t ADCPollIntervalMs   = 250;          // Poll battery voltage every 250ms
+constexpr uint8_t  kChemistrySelectPin = A3;           // PA3, physical 7
+constexpr uint32_t I2CPollIntervalMs   = 2000;         // Poll charger every 2 seconds
+constexpr uint32_t ADCPollIntervalMs   = 250;          // Poll battery voltage every 250ms
 constexpr uint8_t  kCutoffPin          = A7;           // PA7, physical 3
 constexpr uint8_t  kBatteryMonitorPin  = A6;           // PA6, physical 2
 
 Bq25798               charger;
-MonotonicMillis       uptime;
 BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
 const BatteryProfile *currentProfile   = nullptr;
-uint64_t              lastAdcPollMs    = 0;
-uint64_t              lastI2CPollMs    = 0;
+uint32_t              lastAdcPollMs    = 0;
+uint32_t              lastI2CPollMs    = 0;
+bool                  chargerPresent   = false;
+bool                  chargerEverSeen  = false;
+uint32_t              chargerLostAtMs  = 0;
+
+// ATtiny816 pinmap (VQFN-20 / megaTinyCore)
+//
+//            +----------T20 PA1
+//            | +--------T19 PA0
+//            | | +------T18 PC3
+//            | | |  +---T17 PC2
+//            | | |  | +-T16 PC1
+//            | | |  | |        
+//          +-+-+-+--+-+-+
+//  1 PA2 --|            |-- PC0 15
+//  2 PA3 --|  ATtiny816 |-- PB0 14
+//  3 GND --|   VQFN-20  |-- PB1 13
+//  4 VDD --|            |-- PB2 12
+//  5 PA4 --|            |-- PB3 11
+//          +-+-+-+--+-+-+
+//            | | |  | |        
+//            | | |  | +-B10 PB4
+//            | | |  +---B 9 PB5
+//            | | +------B 8 PA7
+//            | +--------B 7 PA6
+//            +----------B 6 PA5
+//
+//  Arduino  Port  Physical  Analog  Alt functions
+//      15  PA2       1      A2     MISO; SCL_alt  (active TWI SCL via Wire.swap(1))
+//      16~  PA3       2      A3     SCK, CLKI (ext clock)
+//       --  GND       3      --
+//       --  VDD       4      --
+//       0~  PA4       5      A4
+//       1~  PA5       6      A5     VREFA
+//       2~  PA6       7      A6     DAC
+//       3~  PA7       8      A7
+//        4  PB5       9      A8     CLKOUT
+//        5  PB4      10      A9
+//        6  PB3      11      --     UART0 RX (default)
+//       7~  PB2      12      --     UART0 TX (default)
+//       8~  PB1      13     A10     SDA (Wire default; inactive — Wire.swap(1) in use)
+//       9~  PB0      14     A11     SCL (Wire default; inactive — Wire.swap(1) in use)
+//      10~  PC0      15      --     WOC (TCD0 PWM when enabled)
+//      11~  PC1      16      --     WOD (TCD0 PWM when enabled)
+//       12  PC2      17      --
+//       13  PC3      18      --
+//       17  PA0      19      A0     UPDI (reserved for programming)
+//       14  PA1      20      A1     MOSI; SDA_alt  (active TWI SDA via Wire.swap(1))
 
 #ifdef attiny816
 
-constexpr uint8_t  kSoftStartPin          = PIN_PB5;           // PB5, physical 9
-constexpr uint8_t  kSoftStartMonitorPin  = PIN_PB4;           // PB4, physical 10
-constexpr uint8_t  kSoftBusMonitorPin          = PIN_PB3;           // PB3, physical 11
-constexpr uint8_t  kOutputEnablePin  = PIN_PB2;           // PB2, physical 12
+constexpr uint8_t  kSoftStartPin        = PIN_PB5; // PB5, Arduino 4, physical 9
+constexpr uint8_t  kSoftStartMonitorPin = PIN_PB4; // PB4, Arduino 5, physical 10
+constexpr uint8_t  kSoftBusMonitorPin   = PIN_PB3; // PB3, Arduino 6, physical 11
+constexpr uint8_t  kOutputEnablePin     = PIN_PB2; // PB2, Arduino 7, physical 12
 
 #endif
 
@@ -57,9 +102,7 @@ void configureBattery() {
   if (currentProfile == nullptr) {
     return;
   }
-  // Charge voltage limit: (mV - 2500) / 10
-  uint16_t chargeVoltageReg = (currentProfile->fullChargeVoltage - 2500u) / 10u;
-  charger.writeRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, chargeVoltageReg);
+  charger.writeRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, currentProfile->chargeReg);
 }
 
 // Read battery ADC and drive the cutoff pin with hysteresis.
@@ -69,10 +112,11 @@ void measureVoltage() {
   }
   const uint16_t vcc     = readVcc();
   const uint16_t voltage = readVoltage(kBatteryMonitorPin, vcc);
-  if (voltage >= currentProfile->reinstateVoltage) {
+  // Profile voltages are stored in 25 mV units; multiply back to mV for comparison.
+  if (voltage >= (uint16_t)currentProfile->reinstateVoltage * 25u) {
     // BatteryOK: normal operation
     digitalWrite(kCutoffPin, LOW);
-  } else if (voltage < currentProfile->cutoffVoltage) {
+  } else if (voltage < (uint16_t)currentProfile->cutoffVoltage * 25u) {
     // BatteryUVCO: disable load
     digitalWrite(kCutoffPin, HIGH);
   }
@@ -112,26 +156,38 @@ void setup() {
   Wire.swap(1); // Route TWI to alternate pins: SDA=PA1 (PIN_WIRE_SDA_PINSWAP_1), SCL=PA2 (PIN_WIRE_SCL_PINSWAP_1)
 #endif
 
-  Wire.begin();
-  Wire.setClock(100000);
-  charger.begin(Wire);
-
 #ifdef INA3221_EMULATOR
-  charger.enableAdc(true); // Enable BQ25798 continuous ADC for INA3221 channel data
-  // Enable subordinate mode on the same TWI module (dual master+subordinate).
+  // Slave first, then master — avoids master begin() clobbering slave registration.
   Wire.begin(kSubordinateI2cAddress);
   Wire.onReceive(onSubordinateReceive);
   Wire.onRequest(onSubordinateRequest);
+  Wire.begin(); // add master (MANDS dual mode)
+#else
+  Wire.begin();
 #endif
 
-  // Read chemistry selector, load profile, and configure charger
+  Wire.setClock(100000);
+  chargerPresent = charger.begin(Wire);
+  if (chargerPresent) chargerEverSeen = true;
+
+  // Chemistry and profile selection is pure ADC — no I2C required.
   currentChemistry = BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
   currentProfile   = BatteryProfiles::getProfile(currentChemistry);
-  configureBattery();
+
+  if (chargerPresent) {
+#ifdef INA3221_EMULATOR
+    charger.enableAdc(true);
+#endif
+    configureBattery();
+  }
+
+  // Pull-ups after Wire.begin() so Wire pin reconfiguration does not clear them.
+  pinMode(kI2cSdaPin, INPUT_PULLUP);
+  pinMode(kI2cSclPin, INPUT_PULLUP);
 }
 
 void loop() {
-  const uint64_t now = uptime.now();
+  const uint32_t now = millis();
 
   // ADC poll: battery cutoff check every 250ms
   if (now - lastAdcPollMs >= ADCPollIntervalMs) {
@@ -143,8 +199,9 @@ void loop() {
     if (selected != currentChemistry) {
       currentChemistry = selected;
       currentProfile   = BatteryProfiles::getProfile(currentChemistry);
-      // ConfigureBattery
-      configureBattery();
+      if (chargerPresent) {
+        configureBattery();
+      }
     }
 
     // MeasureVoltage
@@ -158,15 +215,43 @@ void loop() {
   if (now - lastI2CPollMs >= I2CPollIntervalMs) {
     lastI2CPollMs = now;
 
-    // CheckCharger (all operations check-then-write: read current value, only update if changed)
-    charger.disableWatchdog(); // Clears watchdog bits; uses updateRegister8() internally
-    // Valid settings: BQ25798_VAC_OVP_26V, BQ25798_VAC_OVP_22V,
-    //                 BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
-    charger.setVacOvp(BQ25798_VAC_OVP_26V); // Sets VAC OVP bits; uses updateRegister8() internally
-    charger.enableMppt(true);               // Enables MPPT; uses updateRegister8() internally
-    charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000)); // Checks then writes if different
+    if (!chargerPresent) {
+      // Re-probe using begin(): reads part ID to confirm identity, not just ACK.
+      chargerPresent = charger.begin(Wire);
+      if (chargerPresent) {
+        chargerEverSeen = true;
+        chargerLostAtMs = 0;
 #ifdef INA3221_EMULATOR
-    updateIna3221Registers(charger);
+        charger.enableAdc(true);
+#endif
+        configureBattery();
+      }
+    }
+
+    if (chargerPresent) {
+      // CheckCharger: chain all calls — any failure marks charger lost for re-probe next poll.
+      const bool ok =
+          charger.disableWatchdog() &&
+          // Valid settings: BQ25798_VAC_OVP_26V, BQ25798_VAC_OVP_22V,
+          //                 BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
+          charger.setVacOvp(BQ25798_VAC_OVP_26V) &&
+          charger.enableMppt(true) &&
+          charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000));
+      if (!ok) {
+        chargerPresent  = false;
+        chargerLostAtMs = now; // Record loss time for INA3221 fallback logic.
+      }
+    }
+
+#ifdef INA3221_EMULATOR
+    if (chargerPresent) {
+      updateIna3221Registers(charger);
+    } else if (!chargerEverSeen) {
+      updateIna3221DummyValues(1000u, 10);   // 1 V / 10 mA  — charger never seen
+    } else if (now - chargerLostAtMs >= 10000u) {
+      updateIna3221DummyValues(2000u, 20);   // 2 V / 20 mA  — lost > 10 s
+    }
+    // else: charger lost < 10 s — hold last real values, no update
 #endif
   }
 }

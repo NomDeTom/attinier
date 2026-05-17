@@ -15,34 +15,28 @@ enum class BatteryChemistry : uint8_t {
   NumProfiles,
 };
 
-// Voltage settings for each chemistry (in millivolts)
+// Compact battery profile — all fields fit in uint8_t to minimise flash.
 struct BatteryProfile {
-  uint16_t fullChargeVoltage;  // Charge complete threshold (mV)
-  uint16_t cutoffVoltage;      // Minimum safe voltage; load cut off below this (mV)
-  uint16_t reinstateVoltage;   // Voltage above which load is re-enabled (mV)
-  BatteryChemistry chemistry;
+  uint8_t chargeReg;         // BQ25798 charge voltage register: (fullChargeMv - 2500) / 10
+  uint8_t cutoffVoltage;     // mV / 25  (0 = no cutoff)
+  uint8_t reinstateVoltage;  // mV / 25  (0 = disabled)
 };
 
 // Configuration table
 namespace BatteryProfiles {
 
+static constexpr uint8_t CHG(uint16_t mV)      { return (mV - 2500) / 10; }
+static constexpr uint8_t CUTOFF(uint16_t mV)   { return mV / 25; }
+
 constexpr BatteryProfile profiles[static_cast<uint8_t>(BatteryChemistry::NumProfiles)] = {
-    // TrueDefault - Charger's safe default (conservative, LiionLL-like)
-    {.fullChargeVoltage = 4100, .cutoffVoltage = 3000, .reinstateVoltage = 3200, .chemistry = BatteryChemistry::TrueDefault},
-    // Highest
-    {.fullChargeVoltage = 4600, .cutoffVoltage =    0, .reinstateVoltage =    0, .chemistry = BatteryChemistry::Highest},
-    // LiionLL (Long Life variant)
-    {.fullChargeVoltage = 4100, .cutoffVoltage = 3100, .reinstateVoltage = 3400, .chemistry = BatteryChemistry::LiionLL},
-    // Standard Liion
-    {.fullChargeVoltage = 4200, .cutoffVoltage = 2900, .reinstateVoltage = 3100, .chemistry = BatteryChemistry::Liion},
-    // LiFePO4
-    {.fullChargeVoltage = 3650, .cutoffVoltage = 2500, .reinstateVoltage = 2700, .chemistry = BatteryChemistry::Lifepo4},
-    // Sodium Ion
-    {.fullChargeVoltage = 3900, .cutoffVoltage = 1800, .reinstateVoltage = 2000, .chemistry = BatteryChemistry::SodiumIon},
-    // LTO (Lithium Titanate Oxide)
-    {.fullChargeVoltage = 2900, .cutoffVoltage =    0, .reinstateVoltage =    0, .chemistry = BatteryChemistry::LTO},
-    // NiMH 3-cell
-    {.fullChargeVoltage = 4500, .cutoffVoltage = 2400, .reinstateVoltage = 2600, .chemistry = BatteryChemistry::NiMH3x},
+    {CHG(4100), CUTOFF(3000), CUTOFF(3200)},  // TrueDefault
+    {CHG(4600), CUTOFF(   0), CUTOFF(   0)},  // Highest:   no cutoff
+    {CHG(4100), CUTOFF(3100), CUTOFF(3400)},  // LiionLL
+    {CHG(4200), CUTOFF(2900), CUTOFF(3100)},  // Liion
+    {CHG(3650), CUTOFF(2500), CUTOFF(2700)},  // Lifepo4
+    {CHG(3900), CUTOFF(1800), CUTOFF(2000)},  // SodiumIon
+    {CHG(2900), CUTOFF(   0), CUTOFF(   0)},  // LTO:       no cutoff
+    {CHG(4500), CUTOFF(2400), CUTOFF(2600)},  // NiMH3x
 };
 
 inline const BatteryProfile* getProfile(BatteryChemistry chemistry) {

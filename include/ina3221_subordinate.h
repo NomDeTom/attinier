@@ -26,7 +26,6 @@ constexpr uint16_t kShuntMilliohms = 100u; // 100 mΩ
 // Shadow of the INA3221 register bank.  Updated from the main loop;
 // read by onSubordinateRequest() from the TWI ISR.
 struct Ina3221Regs {
-  uint16_t config   = 0x7127u; // POR value: all 3 channels on, continuous mode
   uint16_t ch1Shunt = 0u;      // bits 15:3, 40 µV/LSB (signed)
   uint16_t ch1Bus   = 0u;      // bits 15:3,  8 mV/LSB
   uint16_t ch2Shunt = 0u;
@@ -41,7 +40,7 @@ volatile uint8_t ina3221RegPtr = 0x00u; // register pointer, set by master write
 // Returns the big-endian 16-bit value for a given INA3221 register address.
 inline uint16_t ina3221GetReg(uint8_t addr) {
   switch (addr) {
-    case 0x00u: return ina3221.config;
+    case 0x00u: return 0x7127u; // config POR value: all 3 channels on, continuous
     case 0x01u: return ina3221.ch1Shunt;
     case 0x02u: return ina3221.ch1Bus;
     case 0x03u: return ina3221.ch2Shunt;
@@ -95,6 +94,21 @@ inline uint16_t toIna3221Shunt(int16_t currentMa) {
 // register value (8 mV/LSB, stored in bits 15:3).
 inline uint16_t toIna3221Bus(uint16_t voltageMv) {
   return static_cast<uint16_t>((voltageMv / 8u) << 3);
+}
+
+// Populate all INA3221 shadow register channels with uniform fallback values.
+// Used when BQ25798 is absent; voltageMv applies to all bus channels,
+// currentMa to all shunt channels (ch2 shunt is always 0 — no system-side shunt).
+inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
+  const uint8_t sreg = SREG;
+  cli();
+  ina3221.ch1Bus   = toIna3221Bus(voltageMv);
+  ina3221.ch1Shunt = toIna3221Shunt(currentMa);
+  ina3221.ch2Bus   = toIna3221Bus(voltageMv);
+  ina3221.ch2Shunt = 0u;
+  ina3221.ch3Bus   = toIna3221Bus(voltageMv);
+  ina3221.ch3Shunt = toIna3221Shunt(currentMa);
+  SREG = sreg;
 }
 
 // Read BQ25798 ADC channels and refresh the INA3221 shadow registers.
