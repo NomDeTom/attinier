@@ -27,8 +27,8 @@ constexpr uint16_t kShuntMilliohms = 100u; // 100 mΩ
 // Shadow of the INA3221 register bank.  Updated from the main loop;
 // read by onSubordinateRequest() from the TWI ISR.
 struct Ina3221Regs {
-  uint16_t ch1Shunt = 0u;      // bits 15:3, 40 µV/LSB (signed)
-  uint16_t ch1Bus   = 0u;      // bits 15:3,  8 mV/LSB
+  uint16_t ch1Shunt = 0u; // bits 15:3, 40 µV/LSB (signed)
+  uint16_t ch1Bus   = 0u; // bits 15:3,  8 mV/LSB
   uint16_t ch2Shunt = 0u;
   uint16_t ch2Bus   = 0u;
   uint16_t ch3Shunt = 0u;
@@ -41,16 +41,26 @@ volatile uint8_t ina3221RegPtr = 0x00u; // register pointer, set by master write
 // Returns the big-endian 16-bit value for a given INA3221 register address.
 inline uint16_t ina3221GetReg(uint8_t addr) {
   switch (addr) {
-    case 0x00u: return 0x7127u; // config POR value: all 3 channels on, continuous
-    case 0x01u: return ina3221.ch1Shunt;
-    case 0x02u: return ina3221.ch1Bus;
-    case 0x03u: return ina3221.ch2Shunt;
-    case 0x04u: return ina3221.ch2Bus;
-    case 0x05u: return ina3221.ch3Shunt;
-    case 0x06u: return ina3221.ch3Bus;
-    case 0xFEu: return 0x5449u; // Texas Instruments manufacturer ID
-    case 0xFFu: return 0x3220u; // INA3221 die ID
-    default:    return 0x0000u;
+  case 0x00u:
+    return 0x7127u; // config POR value: all 3 channels on, continuous
+  case 0x01u:
+    return ina3221.ch1Shunt;
+  case 0x02u:
+    return ina3221.ch1Bus;
+  case 0x03u:
+    return ina3221.ch2Shunt;
+  case 0x04u:
+    return ina3221.ch2Bus;
+  case 0x05u:
+    return ina3221.ch3Shunt;
+  case 0x06u:
+    return ina3221.ch3Bus;
+  case 0xFEu:
+    return 0x5449u; // Texas Instruments manufacturer ID
+  case 0xFFu:
+    return 0x3220u; // INA3221 die ID
+  default:
+    return 0x0000u;
   }
 }
 
@@ -59,21 +69,21 @@ inline void onSubordinateReceive(int numBytes) {
   if (numBytes >= 1 && Wire.available()) {
     ina3221RegPtr = Wire.read();
   }
-  while (Wire.available()) (void)Wire.read(); // drain any trailing bytes
+  while (Wire.available())
+    (void)Wire.read(); // drain any trailing bytes
 }
 
 // TWI subordinate transmit: send the current register's 2 bytes (MSB first),
 // then auto-increment the pointer for sequential reads.
 inline void onSubordinateRequest() {
   const uint16_t val    = ina3221GetReg(ina3221RegPtr++);
-  const uint8_t  buf[2] = { static_cast<uint8_t>(val >> 8),
-                             static_cast<uint8_t>(val & 0xFFu) };
+  const uint8_t  buf[2] = {static_cast<uint8_t>(val >> 8), static_cast<uint8_t>(val & 0xFFu)};
   Wire.write(buf, 2);
 }
 
 // Read a big-endian 16-bit ADC register from the BQ25798.
 // (BQ25798 ADC: high byte at base address, low byte at base+1.)
-inline bool readBq25798Adc(Bq25798& charger, uint8_t reg, uint16_t& out) {
+inline bool readBq25798Adc(Bq25798 &charger, uint8_t reg, uint16_t &out) {
   uint8_t hi = 0u, lo = 0u;
   if (!charger.readRegister8(reg, hi) || !charger.readRegister8(reg + 1u, lo)) {
     return false;
@@ -85,7 +95,8 @@ inline bool readBq25798Adc(Bq25798& charger, uint8_t reg, uint16_t& out) {
 // Convert a BQ25798 current reading (mA, 1 mA/LSB) to an INA3221 shunt-voltage
 // register value.  Negative values (discharge) are clamped to zero.
 inline uint16_t toIna3221Shunt(int16_t currentMa) {
-  if (currentMa < 0) currentMa = 0;
+  if (currentMa < 0)
+    currentMa = 0;
   // V_shunt (µV) = I (mA) × R (mΩ);  INA3221 shunt LSB = 40 µV, stored in bits 15:3.
   const uint32_t shuntUv = static_cast<uint32_t>(currentMa) * kShuntMilliohms;
   return static_cast<uint16_t>((shuntUv / 40u) << 3);
@@ -100,7 +111,8 @@ inline uint16_t toIna3221Bus(uint16_t voltageMv) {
 // Convert a shunt voltage in µV directly to an INA3221 shunt register value.
 // Negative values (reverse current) are clamped to zero.
 inline uint16_t toIna3221ShuntFromUv(int32_t shuntUv) {
-  if (shuntUv < 0) shuntUv = 0;
+  if (shuntUv < 0)
+    shuntUv = 0;
   return static_cast<uint16_t>((static_cast<uint32_t>(shuntUv) / 40u) << 3);
 }
 
@@ -111,7 +123,7 @@ inline void updateIna3221Ch2(uint16_t busVoltMv, int32_t shuntUv) {
   cli();
   ina3221.ch2Bus   = toIna3221Bus(busVoltMv);
   ina3221.ch2Shunt = toIna3221ShuntFromUv(shuntUv);
-  SREG = sreg;
+  SREG             = sreg;
 }
 
 // Populate all INA3221 shadow register channels with uniform fallback values.
@@ -128,12 +140,12 @@ inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
 #endif
   ina3221.ch3Bus   = toIna3221Bus(voltageMv);
   ina3221.ch3Shunt = toIna3221Shunt(currentMa);
-  SREG = sreg;
+  SREG             = sreg;
 }
 
 // Read BQ25798 ADC channels and refresh the INA3221 shadow registers.
 // Call from the main loop only; never from ISR context.
-inline void updateIna3221Registers(Bq25798& charger) {
+inline void updateIna3221Registers(Bq25798 &charger) {
   uint16_t vbus = 0u, vbat = 0u, vsys = 0u, ibusRaw = 0u, ibatRaw = 0u;
   readBq25798Adc(charger, BQ25798_REG_VBUS_ADC, vbus);
   readBq25798Adc(charger, BQ25798_REG_VBAT_ADC, vbat);
@@ -152,7 +164,7 @@ inline void updateIna3221Registers(Bq25798& charger) {
 #endif
   ina3221.ch3Bus   = toIna3221Bus(vbus);
   ina3221.ch3Shunt = toIna3221Shunt(static_cast<int16_t>(ibusRaw));
-  SREG = sreg;
+  SREG             = sreg;
 }
 
 #endif // INA3221_EMULATOR

@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 class MonotonicMillis {
- public:
+public:
   uint64_t now() {
     const uint32_t current = millis();
     if (current < lastLow_) {
@@ -14,7 +14,7 @@ class MonotonicMillis {
     return high_ | current;
   }
 
- private:
+private:
   uint32_t lastLow_ = 0;
-  uint64_t high_ = 0;
+  uint64_t high_    = 0;
 };
