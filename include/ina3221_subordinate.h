@@ -13,7 +13,8 @@
 // current/voltage monitor (Texas Instruments, Manufacturer ID 0x5449).
 //
 //   Channel 1: Battery — VBAT (mV) / IBAT (mA)  from BQ25798 ADC
-//   Channel 2: System  — VSYS (mV) / no current  from BQ25798 ADC
+//   Channel 2: Aux     — V_aux (mV) / I_aux (mA) from ATtiny816 ADC (attiny816 build)
+//              System  — VSYS (mV) / no current  from BQ25798 ADC   (other builds)
 //   Channel 3: Input   — VBUS (mV) / IBUS (mA)  from BQ25798 ADC
 //
 // INA3221 subordinate address: 0x40 (A0=GND), 0x41 (A0=VS), 0x42 (A0=SDA), 0x43 (A0=SCL)
@@ -96,6 +97,23 @@ inline uint16_t toIna3221Bus(uint16_t voltageMv) {
   return static_cast<uint16_t>((voltageMv / 8u) << 3);
 }
 
+// Convert a shunt voltage in µV directly to an INA3221 shunt register value.
+// Negative values (reverse current) are clamped to zero.
+inline uint16_t toIna3221ShuntFromUv(int32_t shuntUv) {
+  if (shuntUv < 0) shuntUv = 0;
+  return static_cast<uint16_t>((static_cast<uint32_t>(shuntUv) / 40u) << 3);
+}
+
+// Update INA3221 channel 2 shadow registers from raw mV / µV measurements.
+// busVoltMv: high-side voltage in mV; shuntUv: voltage across shunt in µV.
+inline void updateIna3221Ch2(uint16_t busVoltMv, int32_t shuntUv) {
+  const uint8_t sreg = SREG;
+  cli();
+  ina3221.ch2Bus   = toIna3221Bus(busVoltMv);
+  ina3221.ch2Shunt = toIna3221ShuntFromUv(shuntUv);
+  SREG = sreg;
+}
+
 // Populate all INA3221 shadow register channels with uniform fallback values.
 // Used when BQ25798 is absent; voltageMv applies to all bus channels,
 // currentMa to all shunt channels (ch2 shunt is always 0 — no system-side shunt).
@@ -104,8 +122,10 @@ inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
   cli();
   ina3221.ch1Bus   = toIna3221Bus(voltageMv);
   ina3221.ch1Shunt = toIna3221Shunt(currentMa);
+#ifndef attiny816
   ina3221.ch2Bus   = toIna3221Bus(voltageMv);
   ina3221.ch2Shunt = 0u;
+#endif
   ina3221.ch3Bus   = toIna3221Bus(voltageMv);
   ina3221.ch3Shunt = toIna3221Shunt(currentMa);
   SREG = sreg;
@@ -126,8 +146,10 @@ inline void updateIna3221Registers(Bq25798& charger) {
   cli();
   ina3221.ch1Bus   = toIna3221Bus(vbat);
   ina3221.ch1Shunt = toIna3221Shunt(static_cast<int16_t>(ibatRaw));
+#ifndef attiny816
   ina3221.ch2Bus   = toIna3221Bus(vsys);
   ina3221.ch2Shunt = 0u;
+#endif
   ina3221.ch3Bus   = toIna3221Bus(vbus);
   ina3221.ch3Shunt = toIna3221Shunt(static_cast<int16_t>(ibusRaw));
   SREG = sreg;

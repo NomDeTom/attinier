@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <avr/sleep.h>
 
 #include "analog_util.h"
 #include "battery_config.h"
@@ -34,13 +35,32 @@ constexpr uint8_t  kCutoffPin          = A7;           // PA7, physical 3
 constexpr uint8_t  kBatteryMonitorPin  = A6;           // PA6, physical 2
 
 Bq25798               charger;
-BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
-const BatteryProfile *currentProfile   = nullptr;
-uint32_t              lastAdcPollMs    = 0;
-uint32_t              lastI2CPollMs    = 0;
-bool                  chargerPresent   = false;
-bool                  chargerEverSeen  = false;
-uint32_t              chargerLostAtMs  = 0;
+BatteryChemistry      currentChemistry  = BatteryChemistry::TrueDefault;
+const BatteryProfile *currentProfile    = nullptr;
+bool                  chargerPresent    = false;
+bool                  chargerEverSeen   = false;
+bool                  cutoffActive      = false;  // mirrors kCutoffPin; HIGH = load disabled
+
+// RTC PIT tick-based timing (PIT period = 8192 RTC cycles = exactly 250 ms at 32.768 kHz).
+volatile bool adcPollDue       = false; // set by PIT ISR every 250 ms
+uint8_t       i2cPollTick      = 0;     // 0–7; I²C poll fires when it reaches 8 (2000 ms)
+uint8_t       chargerLostPolls = 0;     // I²C polls since charger lost; ≥5 → 10 s elapsed
+
+// Initialise the RTC Periodic Interrupt Timer to fire every 250 ms (8192 cycles at 32.768 kHz).
+// The PIT uses OSCULP32K which stays active in STANDBY sleep, so it wakes the CPU without
+// requiring the main oscillator to run.
+inline void initRtcPit() {
+  RTC.CLKSEL     = RTC_CLKSEL_INT32K_gc;         // 32.768 kHz internal oscillator
+  RTC.PITINTCTRL = RTC_PI_bm;                    // enable PIT interrupt
+  while (RTC.PITSTATUS & RTC_CTRLBUSY_bm);       // wait for PIT register sync
+  RTC.PITCTRLA   = RTC_PERIOD_CYC8192_gc         // 8192 cycles = 250 ms
+                 | RTC_PITEN_bm;                 // enable PIT
+}
+
+ISR(RTC_PIT_vect) {
+  adcPollDue      = true;
+  RTC.PITINTFLAGS = RTC_PI_bm;                   // clear interrupt flag
+}
 
 // ATtiny816 pinmap (VQFN-20 / megaTinyCore)
 //
@@ -92,6 +112,9 @@ constexpr uint8_t  kSoftStartPin        = PIN_PB5; // PB5, Arduino 4, physical 9
 constexpr uint8_t  kSoftStartMonitorPin = PIN_PB4; // PB4, Arduino 5, physical 10
 constexpr uint8_t  kSoftBusMonitorPin   = PIN_PB3; // PB3, Arduino 6, physical 11
 constexpr uint8_t  kOutputEnablePin     = PIN_PB2; // PB2, Arduino 7, physical 12
+constexpr uint8_t  kAuxBusPin           = PIN_PA6; // PA6, Arduino 2, physical 7 — aux bus voltage (VCC must be ≥ max bus V)
+constexpr uint8_t  kAuxShuntPin         = PIN_PA7; // PA7, Arduino 3, physical 8 — aux shunt low side (1 Ω shunt)
+constexpr uint8_t  kAuxOversampleLog2   = 6u;      // 64 interleaved pairs — ~3 ms, ~0.9 mA resolution at 5 V/1 Ω
 
 #endif
 
@@ -112,16 +135,40 @@ void measureVoltage() {
   }
   const uint16_t vcc     = readVcc();
   const uint16_t voltage = readVoltage(kBatteryMonitorPin, vcc);
-  // Profile voltages are stored in 25 mV units; multiply back to mV for comparison.
-  if (voltage >= (uint16_t)currentProfile->reinstateVoltage * 25u) {
+  if (voltage >= currentProfile->reinstateMv()) {
     // BatteryOK: normal operation
+    if (cutoffActive) {
+      cutoffActive = false;
+#ifdef attiny816
+      pinMode(kSoftStartPin, INPUT);  // HiZ on cutoff release — restart softstart monitoring
+#endif
+    }
     digitalWrite(kCutoffPin, LOW);
-  } else if (voltage < (uint16_t)currentProfile->cutoffVoltage * 25u) {
+  } else if (voltage < currentProfile->cutoffMv()) {
     // BatteryUVCO: disable load
+    if (!cutoffActive) {
+      cutoffActive = true;
+#ifdef attiny816
+      pinMode(kSoftStartPin, INPUT);  // HiZ on cutoff activation
+#endif
+    }
     digitalWrite(kCutoffPin, HIGH);
   }
   // BatteryLow: in hysteresis zone, do not change cutoff pin state
 }
+
+#if defined(attiny816) && defined(INA3221_EMULATOR)
+// Measure auxiliary input shunt (PA6 high side, PA7 low side) and update
+// INA3221 channel 2 shadow registers.
+// Bus voltage: 8-sample average (INA3221 bus LSB = 8 mV; no benefit in more samples).
+// Shunt voltage: 64-pair interleaved oversample — ~0.9 mA noise floor at 5 V / 1 Ω.
+void measureAuxChannel() {
+  const uint16_t vcc    = readVcc();
+  const uint16_t busMv  = readVoltageAvg(kAuxBusPin, vcc, 3u);
+  const int16_t  diffMv = readDifferentialMv(kAuxBusPin, kAuxShuntPin, vcc, kAuxOversampleLog2);
+  updateIna3221Ch2(busMv, (int32_t)diffMv * 1000);
+}
+#endif
 
 // Monitor softstart pin based on bus monitor vs softstart monitor voltage comparison.
 // If softstart monitor is <90% of bus monitor, softstart pin is set to HiZ (high impedance).
@@ -153,6 +200,7 @@ void setup() {
   digitalWrite(kCutoffPin, LOW);
 
 #ifdef attiny816
+  pinMode(kSoftStartPin, INPUT);  // HiZ until first voltage differential confirms softstart complete
   Wire.swap(1); // Route TWI to alternate pins: SDA=PA1 (PIN_WIRE_SDA_PINSWAP_1), SCL=PA2 (PIN_WIRE_SCL_PINSWAP_1)
 #endif
 
@@ -184,14 +232,17 @@ void setup() {
   // Pull-ups after Wire.begin() so Wire pin reconfiguration does not clear them.
   pinMode(kI2cSdaPin, INPUT_PULLUP);
   pinMode(kI2cSclPin, INPUT_PULLUP);
+
+  // STANDBY sleep: CPU halted, OSCULP32K and TWI address-match remain active.
+  // RTC PIT wakes every 250 ms for ADC work; TWI interrupt wakes for I²C slave responses.
+  set_sleep_mode(SLEEP_MODE_STANDBY);
+  initRtcPit();
 }
 
 void loop() {
-  const uint32_t now = millis();
-
-  // ADC poll: battery cutoff check every 250ms
-  if (now - lastAdcPollMs >= ADCPollIntervalMs) {
-    lastAdcPollMs = now;
+  // ADC poll: fires every PIT tick (250 ms)
+  if (adcPollDue) {
+    adcPollDue = false;
 
     // ReadChemistry
     BatteryChemistry selected =
@@ -209,18 +260,21 @@ void loop() {
 
     // Monitor softstart pin
     monitorSoftStartPin();
-  }
 
-  // I2C poll: charger check every 2 seconds
-  if (now - lastI2CPollMs >= I2CPollIntervalMs) {
-    lastI2CPollMs = now;
+#if defined(attiny816) && defined(INA3221_EMULATOR)
+    measureAuxChannel();
+#endif
+
+    // I2C poll: charger check every 8 ticks (2000 ms)
+    if (++i2cPollTick < 8) goto sleep;
+    i2cPollTick = 0;
 
     if (!chargerPresent) {
       // Re-probe using begin(): reads part ID to confirm identity, not just ACK.
       chargerPresent = charger.begin(Wire);
       if (chargerPresent) {
-        chargerEverSeen = true;
-        chargerLostAtMs = 0;
+        chargerEverSeen    = true;
+        chargerLostPolls   = 0;
 #ifdef INA3221_EMULATOR
         charger.enableAdc(true);
 #endif
@@ -238,8 +292,8 @@ void loop() {
           charger.enableMppt(true) &&
           charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000));
       if (!ok) {
-        chargerPresent  = false;
-        chargerLostAtMs = now; // Record loss time for INA3221 fallback logic.
+        chargerPresent     = false;
+        chargerLostPolls   = 0;   // reset counter so timeout counts from now
       }
     }
 
@@ -248,10 +302,15 @@ void loop() {
       updateIna3221Registers(charger);
     } else if (!chargerEverSeen) {
       updateIna3221DummyValues(1000u, 10);   // 1 V / 10 mA  — charger never seen
-    } else if (now - chargerLostAtMs >= 10000u) {
-      updateIna3221DummyValues(2000u, 20);   // 2 V / 20 mA  — lost > 10 s
+    } else if (++chargerLostPolls >= 5) {
+      updateIna3221DummyValues(2000u, 20);   // 2 V / 20 mA  — lost > 10 s (5 × 2000 ms)
+      chargerLostPolls = 5;                  // saturate so it keeps reporting
     }
     // else: charger lost < 10 s — hold last real values, no update
 #endif
   }
+
+sleep:
+  // Sleep until next PIT tick (250 ms) or TWI address-match interrupt.
+  sleep_mode();
 }

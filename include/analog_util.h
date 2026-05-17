@@ -38,6 +38,26 @@ inline int16_t readVoltage(uint8_t pinA, uint8_t pinB, uint16_t vccMillivolts) {
                                static_cast<int32_t>(a));
 }
 
+// Average 2^log2n samples of a single pin and return voltage in mV.
+inline uint16_t readVoltageAvg(uint8_t pin, uint16_t vccMillivolts, uint8_t log2n) {
+  const uint16_t n = (1u << log2n);
+  uint32_t acc = 0;
+  for (uint16_t i = 0; i < n; ++i) acc += analogRead(pin);
+  return static_cast<uint16_t>((acc * (uint32_t)vccMillivolts) / ((uint32_t)n * 1023u));
+}
+
+// Interleaved oversampled differential: accumulates 2^log2n (pinHigh - pinLow) pairs
+// and returns the mean difference in mV.  Interleaving minimises error from slow VCC
+// drift between the two reads.  Noise is reduced by sqrt(2^log2n) vs a single-pair read.
+inline int16_t readDifferentialMv(uint8_t pinHigh, uint8_t pinLow,
+                                   uint16_t vccMillivolts, uint8_t log2n) {
+  const uint16_t n = (1u << log2n);
+  int32_t acc = 0;
+  for (uint16_t i = 0; i < n; ++i)
+    acc += (int32_t)analogRead(pinHigh) - (int32_t)analogRead(pinLow);
+  return static_cast<int16_t>((acc * (int32_t)vccMillivolts) / ((int32_t)n * 1023));
+}
+
 // Measure VCC by reading the 1.1V internal bandgap reference with VCC as the ADC reference.
 // Accuracy is limited by bandgap tolerance (~±10%), sufficient for voltage threshold comparisons.
 inline uint16_t readVcc() {

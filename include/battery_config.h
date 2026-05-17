@@ -20,6 +20,9 @@ struct BatteryProfile {
   uint8_t chargeReg;         // BQ25798 charge voltage register: (fullChargeMv - 2500) / 10
   uint8_t cutoffVoltage;     // mV / 25  (0 = no cutoff)
   uint8_t reinstateVoltage;  // mV / 25  (0 = disabled)
+
+  uint16_t cutoffMv()    const { return (uint16_t)cutoffVoltage    * 25u; }
+  uint16_t reinstateMv() const { return (uint16_t)reinstateVoltage * 25u; }
 };
 
 // Configuration table
