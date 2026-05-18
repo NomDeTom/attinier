@@ -29,37 +29,9 @@ Upstream library for reference: <https://github.com/adafruit/Adafruit_bq25798>
 
 ## Hardware
 
-### ATtiny412 pinmap (SOIC-8)
-
-```
-                      ┌────────┐
-           VCC    1 ──┤        ├── 8   GND
-DAC/AIN6   PA6    2 ──┤        ├── 7   PA3   SCK/CLKI/AIN3
-    AIN7   PA7    3 ──┤        ├── 6   PA0   UPDI (programming only)
-SDA/AIN1   PA1    4 ──┤        ├── 5   PA2   SCL/AIN2
-                      └────────┘
-```
-
-| Arduino | Port | Physical | Analog | Function                   |
-| ------- | ---- | -------- | ------ | -------------------------- |
-| 0~      | PA6  | 2        | A6     | Battery voltage ADC        |
-| 1~      | PA7  | 3        | A7     | Main battery output enable |
-| 2~      | PA1  | 4        | A1     | SDA (Wire)                 |
-| 3~      | PA2  | 5        | A2     | SCL (Wire)                 |
-| 4~      | PA3  | 7        | A3     | Chemistry select           |
-| 5       | PA0  | 6        | A0     | UPDI (do not use)          |
-
-Wiring notes:
-
-- Add external pull-ups on SDA and SCL (4.7 kΩ to the logic rail).
-- Keep BQ25798 and ATtiny on the same I²C voltage domain.
-- Leave PA0 free for UPDI flashing at all times.
-
----
-
 ### ATtiny816 pinmap (VQFN-20)
 
-```
+```text
            +----------T20 PA1  SDA_alt  (active TWI SDA via Wire.swap(1))
            | +--------T19 PA0  UPDI (reserved for programming)
            | | +------T18 PC3
@@ -126,7 +98,6 @@ Each 250 ms ADC tick:
 
 1. **ReadChemistry** — reads the analog divider on PA3 and maps to one of 10 battery chemistry profiles. On change, reconfigures BQ25798 charge voltage and low-voltage precharge policy.
 2. **MeasureVoltage** — reads main battery voltage (PA4, 3:1 divider) and drives the main/backup battery enable pins with hysteresis:
-
    - voltage ≥ reinstate → main battery output enable LOW, backup battery enable HIGH
    - voltage < cutoff → main battery output enable HIGH, backup battery enable LOW
    - in hysteresis zone → no change
@@ -181,7 +152,6 @@ The slave uses the megaTinyCore TWI MANDS (master-and-slave) dual mode (`-DTWI_M
 
 | Environment | Flash used     | Flash % | RAM used     | RAM % |
 | ----------- | -------------- | ------- | ------------ | ----- |
-| ATtiny412   | 3814 / 4096 B  | 93 %    | 157 / 256 B  | 61 %  |
 | ATtiny816   | 4440 / 8192 B  | 54 %    | 157 / 512 B  | 31 %  |
 | ATtiny1616  | 3988 / 16384 B | 24 %    | 157 / 2048 B | 8 %   |
 
