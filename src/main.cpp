@@ -31,28 +31,29 @@ namespace {
 //        5  PA0       6      A0     UPDI (reserved for programming)
 
 #if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
-constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA; // PA1, physical 4
-constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL; // PA2, physical 5
-constexpr uint8_t  kChargerI2cSdaPin     = A6;           // PA6, physical 2
-constexpr uint8_t  kChargerI2cSclPin     = A7;           // PA7, physical 3
-constexpr uint8_t  kCutoffPin            = A3;           // PA3, physical 7
-#elif defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) && defined(PIN_WIRE_SCL_PINSWAP_1)
-constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA_PINSWAP_1;
-constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL_PINSWAP_1;
-constexpr uint8_t  kChargerI2cSdaPin     = PIN_WIRE_SDA;
-constexpr uint8_t  kChargerI2cSclPin     = PIN_WIRE_SCL;
-constexpr uint8_t  kCutoffPin            = A7; // PA7, physical 3
+constexpr uint8_t kSubordinateI2cSdaPin = PIN_WIRE_SDA; // PA1, physical 4
+constexpr uint8_t kSubordinateI2cSclPin = PIN_WIRE_SCL; // PA2, physical 5
+constexpr uint8_t kChargerI2cSdaPin     = A6;           // PA6, physical 2
+constexpr uint8_t kChargerI2cSclPin     = A7;           // PA7, physical 3
+constexpr uint8_t kCutoffPin            = A3;           // PA3, physical 7
+#elif defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) &&                          \
+    defined(PIN_WIRE_SCL_PINSWAP_1)
+constexpr uint8_t kSubordinateI2cSdaPin = PIN_WIRE_SDA_PINSWAP_1;
+constexpr uint8_t kSubordinateI2cSclPin = PIN_WIRE_SCL_PINSWAP_1;
+constexpr uint8_t kChargerI2cSdaPin     = PIN_WIRE_SDA;
+constexpr uint8_t kChargerI2cSclPin     = PIN_WIRE_SCL;
+constexpr uint8_t kCutoffPin            = A7; // PA7, physical 3
 #else
-constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA;
-constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL;
-constexpr uint8_t  kCutoffPin            = A7; // PA7, physical 3
+constexpr uint8_t kSubordinateI2cSdaPin = PIN_WIRE_SDA;
+constexpr uint8_t kSubordinateI2cSclPin = PIN_WIRE_SCL;
+constexpr uint8_t kCutoffPin            = A7; // PA7, physical 3
 #endif
-constexpr uint32_t I2CPollIntervalMs   = 2000;         // Poll charger every 2 seconds
-constexpr uint32_t ADCPollIntervalMs   = 250;          // Poll battery voltage every 250ms
+constexpr uint32_t I2CPollIntervalMs = 2000; // Poll charger every 2 seconds
+constexpr uint32_t ADCPollIntervalMs = 250;  // Poll battery voltage every 250ms
 
-Bq25798               charger;
+Bq25798 charger;
 #ifdef BQ25798_USE_SOFT_I2C
-SlowSoftI2CMaster     chargerBus(kChargerI2cSdaPin, kChargerI2cSclPin, false);
+SlowSoftI2CMaster chargerBus(kChargerI2cSdaPin, kChargerI2cSclPin, false);
 #endif
 BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
 const BatteryProfile *currentProfile   = nullptr;
@@ -265,7 +266,8 @@ void setup() {
   pinMode(kSoftStartPin, INPUT); // HiZ until first voltage differential confirms softstart complete
 #endif
 
-#if defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) && defined(PIN_WIRE_SCL_PINSWAP_1)
+#if defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) &&                            \
+    defined(PIN_WIRE_SCL_PINSWAP_1)
   Wire.swap(1); // Route TWI to alternate pins: SDA=PA1 (PIN_WIRE_SDA_PINSWAP_1), SCL=PA2
                 // (PIN_WIRE_SCL_PINSWAP_1)
 #endif
