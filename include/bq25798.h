@@ -40,8 +40,8 @@ public:
 
 #ifdef BQ25798_USE_SOFT_I2C
   bool begin(SlowSoftI2CMaster &wire, uint8_t address = kDefaultAddress) {
-    wire_    = &wire;
-    address_ = address;
+    wire_             = &wire;
+    address_          = address;
     uint8_t part_info = 0;
     if (!readRegister8(BQ25798_REG_PART_INFORMATION, part_info)) {
       return false;
@@ -50,8 +50,8 @@ public:
   }
 #else
   bool begin(TwoWire &wire = Wire, uint8_t address = kDefaultAddress) {
-    wire_    = &wire;
-    address_  = address;
+    wire_             = &wire;
+    address_          = address;
     uint8_t part_info = 0;
     if (!readRegister8(BQ25798_REG_PART_INFORMATION, part_info)) {
       return false;
@@ -261,7 +261,7 @@ private:
 #ifdef BQ25798_USE_SOFT_I2C
   SlowSoftI2CMaster *wire_ = nullptr;
 #else
-  TwoWire *wire_    = nullptr;
+  TwoWire *wire_ = nullptr;
 #endif
-  uint8_t  address_ = kDefaultAddress;
+  uint8_t address_ = kDefaultAddress;
 };

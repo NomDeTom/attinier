@@ -5,6 +5,7 @@
 // Read an analog pin and return voltage as a 0-7 scale of VCC
 // Example: if VCC = 5V and pin reads 2.5V, returns 3-4 (representing ~2.5V / 5V * 7)
 inline uint8_t readVoltageLevel(uint8_t pin) {
+  analogReference(VDD);
   // Read ADC value (0-1023 for 10-bit ADC)
   uint16_t adcValue = analogRead(pin);
 
@@ -24,6 +25,7 @@ inline uint8_t readVoltageLevel(uint8_t pin) {
 // Read an analog pin and return the voltage in millivolts.
 // vccMillivolts: supply voltage in mV (must match the ADC reference).
 inline uint16_t readVoltage(uint8_t pin, uint16_t vccMillivolts) {
+  analogReference(VDD);
   uint16_t adcValue = analogRead(pin);
   return static_cast<uint16_t>((static_cast<uint32_t>(adcValue) * vccMillivolts) / 1023u);
 }
@@ -41,6 +43,7 @@ inline int16_t readVoltage(uint8_t pinA, uint8_t pinB, uint16_t vccMillivolts) {
 
 // Average 2^log2n samples of a single pin and return voltage in mV.
 inline uint16_t readVoltageAvg(uint8_t pin, uint16_t vccMillivolts, uint8_t log2n) {
+  analogReference(VDD);
   const uint16_t n   = (1u << log2n);
   uint32_t       acc = 0;
   for (uint16_t i = 0; i < n; ++i)
@@ -53,6 +56,7 @@ inline uint16_t readVoltageAvg(uint8_t pin, uint16_t vccMillivolts, uint8_t log2
 // drift between the two reads.  Noise is reduced by sqrt(2^log2n) vs a single-pair read.
 inline int16_t readDifferentialMv(uint8_t pinHigh, uint8_t pinLow, uint16_t vccMillivolts,
                                   uint8_t log2n) {
+  analogReference(VDD);
   const uint16_t n   = (1u << log2n);
   int32_t        acc = 0;
   for (uint16_t i = 0; i < n; ++i)
@@ -71,19 +75,19 @@ inline uint16_t readVcc() {
   return static_cast<uint16_t>(1100UL * 1023UL / raw);
 }
 
-// Measure current through INA180A2 (50V/V gain) using a 10mOhm shunt and the 1.1v internal reference.
-// Returns current in mA.  Accuracy is limited by bandgap tolerance (~±3%).
-// 2mA per mV with 50V/V gain and 10mOhm shunt, so 1.1V range corresponds to 2-2200mA.
-// Note: the INA180A2 output is positive only - reverse current is ignored.
+// Measure current through INA180A2 (50V/V gain) using a 10mOhm shunt and the 1.1v internal
+// reference. Returns current in mA.  Accuracy is limited by bandgap tolerance (~±3%). 2mA per mV
+// with 50V/V gain and 10mOhm shunt, so 1.1V range corresponds to 2-2200mA. Note: the INA180A2
+// output is positive only - reverse current is ignored.
 inline int16_t readINA180A2Current(uint8_t adcPin) {
   analogReference(INTERNAL1V1); // configure VREF module to 1.1V
   uint16_t raw = analogRead(adcPin);
   return static_cast<int16_t>((int32_t)raw * 2 * 1100 / 1023);
 }
 
-// Measure voltage across a resistor divider with 1:3 ratio (e.g. 10k and 30k) using the 1.1v internal reference.
-// Returns voltage in mV.  Accuracy is limited by bandgap tolerance (~±3%).
-// With 1:3 ratio, the divider output is 1/4 of the input
+// Measure voltage across a resistor divider with 1:3 ratio (e.g. 10k and 30k) using the 1.1v
+// internal reference. Returns voltage in mV.  Accuracy is limited by bandgap tolerance (~±3%). With
+// 1:3 ratio, the divider output is 1/4 of the input
 inline int16_t readDividerVoltage(uint8_t adcPin) {
   analogReference(INTERNAL1V1); // configure VREF module to 1.1V
   uint16_t raw = analogRead(adcPin);

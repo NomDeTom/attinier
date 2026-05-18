@@ -12,9 +12,8 @@
 // The ATtiny presents itself on the I2C bus as an INA3221 3-channel
 // current/voltage monitor (Texas Instruments, Manufacturer ID 0x5449).
 //
-//   Channel 1: Battery — VBAT (mV) / IBAT (mA)  from BQ25798 ADC
-//   Channel 2: Aux     — V_aux (mV) / I_aux (mA) from ATtiny816 ADC (attiny816 build)
-//              System  — VSYS (mV) / no current  from BQ25798 ADC   (other builds)
+//   Channel 1: Main battery   — direct divider voltage / BQ25798 IBAT current
+//   Channel 2: Backup battery — direct divider voltage / INA180 current sample
 //   Channel 3: Input   — VBUS (mV) / IBUS (mA)  from BQ25798 ADC
 //
 // INA3221 subordinate address: 0x40 (A0=GND), 0x41 (A0=VS), 0x42 (A0=SDA), 0x43 (A0=SCL)
@@ -126,6 +125,22 @@ inline void updateIna3221Ch2(uint16_t busVoltMv, int32_t shuntUv) {
   SREG             = sreg;
 }
 
+inline void updateIna3221Ch1(uint16_t busVoltMv, int16_t currentMa) {
+  const uint8_t sreg = SREG;
+  cli();
+  ina3221.ch1Bus   = toIna3221Bus(busVoltMv);
+  ina3221.ch1Shunt = toIna3221Shunt(currentMa);
+  SREG             = sreg;
+}
+
+inline void updateIna3221Ch3(uint16_t busVoltMv, int16_t currentMa) {
+  const uint8_t sreg = SREG;
+  cli();
+  ina3221.ch3Bus   = toIna3221Bus(busVoltMv);
+  ina3221.ch3Shunt = toIna3221Shunt(currentMa);
+  SREG             = sreg;
+}
+
 // Populate all INA3221 shadow register channels with uniform fallback values.
 // Used when BQ25798 is absent; voltageMv applies to all bus channels,
 // currentMa to all shunt channels (ch2 shunt is always 0 — no system-side shunt).
@@ -134,10 +149,8 @@ inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
   cli();
   ina3221.ch1Bus   = toIna3221Bus(voltageMv);
   ina3221.ch1Shunt = toIna3221Shunt(currentMa);
-#ifndef attiny816
   ina3221.ch2Bus   = toIna3221Bus(voltageMv);
-  ina3221.ch2Shunt = 0u;
-#endif
+  ina3221.ch2Shunt = toIna3221Shunt(currentMa);
   ina3221.ch3Bus   = toIna3221Bus(voltageMv);
   ina3221.ch3Shunt = toIna3221Shunt(currentMa);
   SREG             = sreg;
@@ -146,25 +159,12 @@ inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
 // Read BQ25798 ADC channels and refresh the INA3221 shadow registers.
 // Call from the main loop only; never from ISR context.
 inline void updateIna3221Registers(Bq25798 &charger) {
-  uint16_t vbus = 0u, vbat = 0u, vsys = 0u, ibusRaw = 0u, ibatRaw = 0u;
+  uint16_t vbus = 0u, ibusRaw = 0u;
   readBq25798Adc(charger, BQ25798_REG_VBUS_ADC, vbus);
-  readBq25798Adc(charger, BQ25798_REG_VBAT_ADC, vbat);
-  readBq25798Adc(charger, BQ25798_REG_VSYS_ADC, vsys);
   readBq25798Adc(charger, BQ25798_REG_IBUS_ADC, ibusRaw);
-  readBq25798Adc(charger, BQ25798_REG_IBAT_ADC, ibatRaw);
 
   // Guard against the TWI ISR reading a partially-updated struct.
-  const uint8_t sreg = SREG;
-  cli();
-  ina3221.ch1Bus   = toIna3221Bus(vbat);
-  ina3221.ch1Shunt = toIna3221Shunt(static_cast<int16_t>(ibatRaw));
-#ifndef attiny816
-  ina3221.ch2Bus   = toIna3221Bus(vsys);
-  ina3221.ch2Shunt = 0u;
-#endif
-  ina3221.ch3Bus   = toIna3221Bus(vbus);
-  ina3221.ch3Shunt = toIna3221Shunt(static_cast<int16_t>(ibusRaw));
-  SREG             = sreg;
+  updateIna3221Ch3(vbus, static_cast<int16_t>(ibusRaw));
 }
 
 #endif // INA3221_EMULATOR
