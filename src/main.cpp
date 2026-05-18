@@ -2,6 +2,10 @@
 #include <Wire.h>
 #include <avr/sleep.h>
 
+#ifdef BQ25798_USE_SOFT_I2C
+#include <SlowSoftI2CMaster.h>
+#endif
+
 #include "analog_util.h"
 #include "battery_config.h"
 #include "bq25798.h"
@@ -26,15 +30,30 @@ namespace {
 //       4~  PA3       7      A3     SCK, CLKI (ext clock)
 //        5  PA0       6      A0     UPDI (reserved for programming)
 
-constexpr uint8_t  kI2cSdaPin          = PIN_WIRE_SDA; // PA1, physical 4
-constexpr uint8_t  kI2cSclPin          = PIN_WIRE_SCL; // PA2, physical 5
-constexpr uint8_t  kChemistrySelectPin = A3;           // PA3, physical 7
+#if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
+constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA; // PA1, physical 4
+constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL; // PA2, physical 5
+constexpr uint8_t  kChargerI2cSdaPin     = A6;           // PA6, physical 2
+constexpr uint8_t  kChargerI2cSclPin     = A7;           // PA7, physical 3
+constexpr uint8_t  kCutoffPin            = A3;           // PA3, physical 7
+#elif defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) && defined(PIN_WIRE_SCL_PINSWAP_1)
+constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA_PINSWAP_1;
+constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL_PINSWAP_1;
+constexpr uint8_t  kChargerI2cSdaPin     = PIN_WIRE_SDA;
+constexpr uint8_t  kChargerI2cSclPin     = PIN_WIRE_SCL;
+constexpr uint8_t  kCutoffPin            = A7; // PA7, physical 3
+#else
+constexpr uint8_t  kSubordinateI2cSdaPin = PIN_WIRE_SDA;
+constexpr uint8_t  kSubordinateI2cSclPin = PIN_WIRE_SCL;
+constexpr uint8_t  kCutoffPin            = A7; // PA7, physical 3
+#endif
 constexpr uint32_t I2CPollIntervalMs   = 2000;         // Poll charger every 2 seconds
 constexpr uint32_t ADCPollIntervalMs   = 250;          // Poll battery voltage every 250ms
-constexpr uint8_t  kCutoffPin          = A7;           // PA7, physical 3
-constexpr uint8_t  kBatteryMonitorPin  = A6;           // PA6, physical 2
 
 Bq25798               charger;
+#ifdef BQ25798_USE_SOFT_I2C
+SlowSoftI2CMaster     chargerBus(kChargerI2cSdaPin, kChargerI2cSclPin, false);
+#endif
 BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
 const BatteryProfile *currentProfile   = nullptr;
 bool                  chargerPresent   = false;
@@ -130,13 +149,54 @@ void configureBattery() {
   charger.writeRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, currentProfile->chargeReg);
 }
 
+bool readChargerAdc(uint8_t reg, uint16_t &out) {
+  uint8_t hi = 0u;
+  uint8_t lo = 0u;
+  if (!charger.readRegister8(reg, hi) || !charger.readRegister8(reg + 1u, lo)) {
+    return false;
+  }
+  out = (static_cast<uint16_t>(hi) << 8) | lo;
+  return true;
+}
+
+uint8_t readChemistryLevel() {
+#if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
+  uint16_t vac1 = 0u;
+  uint16_t vac2 = 0u;
+  if (!chargerPresent || !readChargerAdc(BQ25798_REG_VAC1_ADC, vac1) ||
+      !readChargerAdc(BQ25798_REG_VAC2_ADC, vac2) || vac1 == 0u) {
+    return static_cast<uint8_t>(BatteryChemistry::TrueDefault);
+  }
+  const uint32_t scaled = static_cast<uint32_t>(vac2) * 7u + (vac1 / 2u);
+  const uint8_t  level  = static_cast<uint8_t>(scaled / vac1);
+  return (level > 7u) ? 7u : level;
+#else
+  return readVoltageLevel(A3);
+#endif
+}
+
+bool beginCharger() {
+#ifdef BQ25798_USE_SOFT_I2C
+  return chargerBus.i2c_init() && charger.begin(chargerBus);
+#else
+  return charger.begin(Wire);
+#endif
+}
+
 // Read battery ADC and drive the cutoff pin with hysteresis.
 void measureVoltage() {
   if (currentProfile == nullptr) {
     return;
   }
-  const uint16_t vcc     = readVcc();
-  const uint16_t voltage = readVoltage(kBatteryMonitorPin, vcc);
+  uint16_t voltage = 0u;
+#if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
+  if (!chargerPresent || !readChargerAdc(BQ25798_REG_VBAT_ADC, voltage)) {
+    return;
+  }
+#else
+  const uint16_t vcc = readVcc();
+  voltage            = readVoltage(A6, vcc);
+#endif
   if (voltage >= currentProfile->reinstateMv()) {
     // BatteryOK: normal operation
     if (cutoffActive) {
@@ -195,47 +255,57 @@ void monitorSoftStartPin() {
 } // namespace
 
 void setup() {
-  (void)kI2cSdaPin;
-  (void)kI2cSclPin;
+  (void)kSubordinateI2cSdaPin;
+  (void)kSubordinateI2cSclPin;
 
   pinMode(kCutoffPin, OUTPUT);
   digitalWrite(kCutoffPin, LOW);
 
 #ifdef attiny816
   pinMode(kSoftStartPin, INPUT); // HiZ until first voltage differential confirms softstart complete
+#endif
+
+#if defined(BQ25798_USE_SOFT_I2C) && defined(PIN_WIRE_SDA_PINSWAP_1) && defined(PIN_WIRE_SCL_PINSWAP_1)
   Wire.swap(1); // Route TWI to alternate pins: SDA=PA1 (PIN_WIRE_SDA_PINSWAP_1), SCL=PA2
                 // (PIN_WIRE_SCL_PINSWAP_1)
 #endif
 
 #ifdef INA3221_EMULATOR
-  // Slave first, then master — avoids master begin() clobbering slave registration.
+  // Hardware TWI serves only the INA3221 subordinate bus.
   Wire.begin(kSubordinateI2cAddress);
   Wire.onReceive(onSubordinateReceive);
   Wire.onRequest(onSubordinateRequest);
+#ifndef BQ25798_USE_SOFT_I2C
+  // Shared-bus fallback: add master mode only where the charger still rides on Wire.
   Wire.begin(); // add master (MANDS dual mode)
+#endif
 #else
   Wire.begin();
 #endif
 
+#ifndef BQ25798_USE_SOFT_I2C
   Wire.setClock(100000);
-  chargerPresent = charger.begin(Wire);
+#endif
+  chargerPresent = beginCharger();
   if (chargerPresent)
     chargerEverSeen = true;
-
-  // Chemistry and profile selection is pure ADC — no I2C required.
-  currentChemistry = BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
-  currentProfile   = BatteryProfiles::getProfile(currentChemistry);
 
   if (chargerPresent) {
 #ifdef INA3221_EMULATOR
     charger.enableAdc(true);
 #endif
+  }
+
+  currentChemistry = BatteryProfiles::selectChemistryByLevel(readChemistryLevel());
+  currentProfile   = BatteryProfiles::getProfile(currentChemistry);
+
+  if (chargerPresent) {
     configureBattery();
   }
 
   // Pull-ups after Wire.begin() so Wire pin reconfiguration does not clear them.
-  pinMode(kI2cSdaPin, INPUT_PULLUP);
-  pinMode(kI2cSclPin, INPUT_PULLUP);
+  pinMode(kSubordinateI2cSdaPin, INPUT_PULLUP);
+  pinMode(kSubordinateI2cSclPin, INPUT_PULLUP);
 
   // STANDBY sleep: CPU halted, OSCULP32K and TWI address-match remain active.
   // RTC PIT wakes every 250 ms for ADC work; TWI interrupt wakes for I²C slave responses.
@@ -249,8 +319,7 @@ void loop() {
     adcPollDue = false;
 
     // ReadChemistry
-    BatteryChemistry selected =
-        BatteryProfiles::selectChemistryByLevel(readVoltageLevel(kChemistrySelectPin));
+    BatteryChemistry selected = BatteryProfiles::selectChemistryByLevel(readChemistryLevel());
     if (selected != currentChemistry) {
       currentChemistry = selected;
       currentProfile   = BatteryProfiles::getProfile(currentChemistry);
@@ -276,13 +345,15 @@ void loop() {
 
     if (!chargerPresent) {
       // Re-probe using begin(): reads part ID to confirm identity, not just ACK.
-      chargerPresent = charger.begin(Wire);
+      chargerPresent = beginCharger();
       if (chargerPresent) {
         chargerEverSeen  = true;
         chargerLostPolls = 0;
 #ifdef INA3221_EMULATOR
         charger.enableAdc(true);
 #endif
+        currentChemistry = BatteryProfiles::selectChemistryByLevel(readChemistryLevel());
+        currentProfile   = BatteryProfiles::getProfile(currentChemistry);
         configureBattery();
       }
     }

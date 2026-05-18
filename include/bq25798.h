@@ -2,7 +2,12 @@
 
 #include "bq25798_registers.h"
 #include <Arduino.h>
+
+#ifdef BQ25798_USE_SOFT_I2C
+#include <SlowSoftI2CMaster.h>
+#else
 #include <Wire.h>
+#endif
 
 class Bq25798 {
 public:
@@ -33,28 +38,63 @@ public:
     ChargePhase phase          = ChargePhase::NotCharging;
   };
 
-  bool begin(TwoWire &wire = Wire, uint8_t address = kDefaultAddress) {
+#ifdef BQ25798_USE_SOFT_I2C
+  bool begin(SlowSoftI2CMaster &wire, uint8_t address = kDefaultAddress) {
     wire_    = &wire;
     address_ = address;
-    // Verify part information register to confirm chip is present
     uint8_t part_info = 0;
     if (!readRegister8(BQ25798_REG_PART_INFORMATION, part_info)) {
       return false;
     }
-    // Verify part number (bits 5-3 should be 011b = 3h for BQ25798)
     return (part_info & 0x38) == 0x18;
   }
+#else
+  bool begin(TwoWire &wire = Wire, uint8_t address = kDefaultAddress) {
+    wire_    = &wire;
+    address_  = address;
+    uint8_t part_info = 0;
+    if (!readRegister8(BQ25798_REG_PART_INFORMATION, part_info)) {
+      return false;
+    }
+    return (part_info & 0x38) == 0x18;
+  }
+#endif
 
   bool probe() const {
+#ifdef BQ25798_USE_SOFT_I2C
     if (wire_ == nullptr) {
       return false;
     }
-
+    const bool ok = wire_->i2c_start(static_cast<uint8_t>(address_ << 1));
+    wire_->i2c_stop();
+    return ok;
+#else
+    if (wire_ == nullptr) {
+      return false;
+    }
     wire_->beginTransmission(address_);
     return wire_->endTransmission() == 0;
+#endif
   }
 
   bool readRegister8(uint8_t reg, uint8_t &value) const {
+#ifdef BQ25798_USE_SOFT_I2C
+    if (wire_ == nullptr) {
+      return false;
+    }
+    bool ok = wire_->i2c_start(static_cast<uint8_t>(address_ << 1));
+    if (ok) {
+      ok = wire_->i2c_write(reg);
+    }
+    if (ok) {
+      ok = wire_->i2c_rep_start(static_cast<uint8_t>((address_ << 1) | 1u));
+    }
+    if (ok) {
+      value = wire_->i2c_read(true);
+    }
+    wire_->i2c_stop();
+    return ok;
+#else
     if (wire_ == nullptr) {
       return false;
     }
@@ -71,9 +111,24 @@ public:
 
     value = wire_->read();
     return true;
+#endif
   }
 
   bool writeRegister8(uint8_t reg, uint8_t value) const {
+#ifdef BQ25798_USE_SOFT_I2C
+    if (wire_ == nullptr) {
+      return false;
+    }
+    bool ok = wire_->i2c_start(static_cast<uint8_t>(address_ << 1));
+    if (ok) {
+      ok = wire_->i2c_write(reg);
+    }
+    if (ok) {
+      ok = wire_->i2c_write(value);
+    }
+    wire_->i2c_stop();
+    return ok;
+#else
     if (wire_ == nullptr) {
       return false;
     }
@@ -82,6 +137,7 @@ public:
     wire_->write(reg);
     wire_->write(value);
     return wire_->endTransmission() == 0;
+#endif
   }
 
   bool readRegister16(uint8_t reg, uint16_t &value) const {
@@ -96,6 +152,23 @@ public:
   }
 
   bool writeRegister16(uint8_t reg, uint16_t value) const {
+#ifdef BQ25798_USE_SOFT_I2C
+    if (wire_ == nullptr) {
+      return false;
+    }
+    bool ok = wire_->i2c_start(static_cast<uint8_t>(address_ << 1));
+    if (ok) {
+      ok = wire_->i2c_write(reg);
+    }
+    if (ok) {
+      ok = wire_->i2c_write(static_cast<uint8_t>(value & 0xFFu));
+    }
+    if (ok) {
+      ok = wire_->i2c_write(static_cast<uint8_t>((value >> 8) & 0xFFu));
+    }
+    wire_->i2c_stop();
+    return ok;
+#else
     if (wire_ == nullptr) {
       return false;
     }
@@ -105,6 +178,7 @@ public:
     wire_->write(static_cast<uint8_t>(value & 0xFF));
     wire_->write(static_cast<uint8_t>((value >> 8) & 0xFF));
     return wire_->endTransmission() == 0;
+#endif
   }
 
   bool updateRegister8(uint8_t reg, uint8_t mask, uint8_t value) const {
@@ -184,6 +258,10 @@ public:
   }
 
 private:
+#ifdef BQ25798_USE_SOFT_I2C
+  SlowSoftI2CMaster *wire_ = nullptr;
+#else
   TwoWire *wire_    = nullptr;
+#endif
   uint8_t  address_ = kDefaultAddress;
 };
