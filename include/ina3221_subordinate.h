@@ -125,6 +125,7 @@ inline void updateIna3221Ch2(uint16_t busVoltMv, int32_t shuntUv) {
   SREG             = sreg;
 }
 
+// Update INA3221 channel 1 shadow registers from bus voltage in mV and current in mA.
 inline void updateIna3221Ch1(uint16_t busVoltMv, int16_t currentMa) {
   const uint8_t sreg = SREG;
   cli();
@@ -133,25 +134,11 @@ inline void updateIna3221Ch1(uint16_t busVoltMv, int16_t currentMa) {
   SREG             = sreg;
 }
 
+// Update INA3221 channel 3 shadow registers from bus voltage in mV and current in mA.
 inline void updateIna3221Ch3(uint16_t busVoltMv, int16_t currentMa) {
   const uint8_t sreg = SREG;
   cli();
   ina3221.ch3Bus   = toIna3221Bus(busVoltMv);
-  ina3221.ch3Shunt = toIna3221Shunt(currentMa);
-  SREG             = sreg;
-}
-
-// Populate all INA3221 shadow register channels with uniform fallback values.
-// Used when BQ25798 is absent; voltageMv applies to all bus channels,
-// currentMa to all shunt channels (ch2 shunt is always 0 — no system-side shunt).
-inline void updateIna3221DummyValues(uint16_t voltageMv, int16_t currentMa) {
-  const uint8_t sreg = SREG;
-  cli();
-  ina3221.ch1Bus   = toIna3221Bus(voltageMv);
-  ina3221.ch1Shunt = toIna3221Shunt(currentMa);
-  ina3221.ch2Bus   = toIna3221Bus(voltageMv);
-  ina3221.ch2Shunt = toIna3221Shunt(currentMa);
-  ina3221.ch3Bus   = toIna3221Bus(voltageMv);
   ina3221.ch3Shunt = toIna3221Shunt(currentMa);
   SREG             = sreg;
 }

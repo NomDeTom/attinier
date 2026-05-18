@@ -40,14 +40,14 @@ SDA/AIN1   PA1    4 ──┤        ├── 5   PA2   SCL/AIN2
                       └────────┘
 ```
 
-| Arduino | Port | Physical | Analog | Function            |
-| ------- | ---- | -------- | ------ | ------------------- |
-| 0~      | PA6  | 2        | A6     | Battery voltage ADC |
-| 1~      | PA7  | 3        | A7     | Load cutoff output  |
-| 2~      | PA1  | 4        | A1     | SDA (Wire)          |
-| 3~      | PA2  | 5        | A2     | SCL (Wire)          |
-| 4~      | PA3  | 7        | A3     | Chemistry select    |
-| 5       | PA0  | 6        | A0     | UPDI (do not use)   |
+| Arduino | Port | Physical | Analog | Function                   |
+| ------- | ---- | -------- | ------ | -------------------------- |
+| 0~      | PA6  | 2        | A6     | Battery voltage ADC        |
+| 1~      | PA7  | 3        | A7     | Main battery output enable |
+| 2~      | PA1  | 4        | A1     | SDA (Wire)                 |
+| 3~      | PA2  | 5        | A2     | SCL (Wire)                 |
+| 4~      | PA3  | 7        | A3     | Chemistry select           |
+| 5       | PA0  | 6        | A0     | UPDI (do not use)          |
 
 Wiring notes:
 
@@ -97,10 +97,10 @@ Wiring notes:
 | 7~      | PB2  | 12       | —      | (spare / Output enable — unused)             |
 | 8~      | PB1  | 13       | A10    | SDA Wire default (inactive — swap(1) in use) |
 | 9~      | PB0  | 14       | A11    | SCL Wire default (inactive — swap(1) in use) |
-| 10~     | PC0  | 15       | —      | (spare)                                      |
-| 11~     | PC1  | 16       | —      | (spare)                                      |
-| 12      | PC2  | 17       | —      | (spare)                                      |
-| 13      | PC3  | 18       | —      | (spare)                                      |
+| 10~     | PC0  | 15       | —      | Test switch input (LOW = switch pressed)     |
+| 11~     | PC1  | 16       | —      | Test indicator output (HIGH when pressed)    |
+| 12      | PC2  | 17       | —      | Backup battery enable (LOW = enable)         |
+| 13      | PC3  | 18       | —      | Main battery output enable (LOW = enable)    |
 | 17      | PA0  | 19       | A0     | UPDI (reserved for programming)              |
 | 14      | PA1  | 20       | A1     | SDA_alt — active TWI SDA via `Wire.swap(1)`  |
 
@@ -124,37 +124,41 @@ The TWI address-match interrupt also wakes the CPU from STANDBY, so the INA3221 
 
 Each 250 ms ADC tick:
 
-1. **ReadChemistry** — reads the analog divider on PA3 (ATtiny412) or PA3/pin 2 (ATtiny816) and maps to one of 8 battery chemistry profiles. On change, writes the new charge voltage to BQ25798 `REG01`.
-2. **MeasureVoltage** — reads VCC via the internal 1.1 V bandgap, then reads battery voltage and drives the cutoff pin with hysteresis:
-   - voltage ≥ reinstate → cutoff LOW (load on)
-   - voltage < cutoff → cutoff HIGH (load off, UVCO)
+1. **ReadChemistry** — reads the analog divider on PA3 and maps to one of 10 battery chemistry profiles. On change, reconfigures BQ25798 charge voltage and low-voltage precharge policy.
+2. **MeasureVoltage** — reads main battery voltage (PA4, 3:1 divider) and drives the main/backup battery enable pins with hysteresis:
+
+   - voltage ≥ reinstate → main battery output enable LOW, backup battery enable HIGH
+   - voltage < cutoff → main battery output enable HIGH, backup battery enable LOW
    - in hysteresis zone → no change
-   - On ATtiny816: the softstart pin is set to HiZ (INPUT) on both cutoff activation and release.
-3. **MonitorSoftStartPin** _(ATtiny816 only)_ — compares softstart monitor (PB4) and bus monitor (PB3) voltages. If the softstart monitor lags >10 mV behind the bus monitor, PB5 is set to INPUT (HiZ) to let the softstart circuit ramp; otherwise PB5 is driven LOW.
-4. **MeasureAuxChannel** _(ATtiny816 + INA3221_EMULATOR only)_ — measures PA6 (bus) and PA6/PA7 differential (64-pair oversampled) and updates INA3221 channel 2 shadow registers.
+
+3. **UpdateIna3221DirectChannels** _(INA3221_EMULATOR only)_ — updates INA3221 ch1 (main battery voltage + BQ25798 IBAT) and ch2 (backup battery voltage from PA5 + INA180 current from PA7).
+4. **MonitorSupercapCharging** — reads supercap bus voltage (PB4) and capacitor voltage (PB5). Enables the P-FET gate (PB3 driven LOW) when cap ≥ 95% of bus; otherwise sets PB3 to INPUT (Hi-Z) to disable the path.
+5. **TestSwitch** — reads PC0 (active-low, internal pullup); drives PC1 HIGH while the switch is held, LOW otherwise.
 
 Each 2000 ms I²C tick (every 8th ADC tick):
 
-5. **ProbeCharger** — if charger was lost, re-runs `begin()` (reads part ID, not just ACK) to re-detect.
-6. **CheckCharger** — disables BQ25798 watchdog, sets VAC OVP to 26 V, enables MPPT, sets minimum system voltage to 3 V.
-7. **UpdateINA3221** _(INA3221_EMULATOR only)_ — reads BQ25798 ADC registers (VBUS, IBUS, VBAT, IBAT, VSYS) and updates the INA3221 slave register shadow. On charger loss, holds the last real values for up to 10 s (5 polls), then substitutes dummy values.
+6. **ProbeCharger** — if charger was lost, re-runs `begin()` (reads part ID, not just ACK) to re-detect.
+7. **CheckCharger** — disables BQ25798 watchdog, sets VAC OVP to 26 V, enables MPPT, sets minimum system voltage to 3 V, and applies thermal profile (TS emulation for LTO; default JEITA for all others).
+8. **UpdateINA3221** _(INA3221_EMULATOR only)_ — reads BQ25798 ADC registers (VBUS, IBUS, VBAT, IBAT) and updates INA3221 ch3 shadow. On charger loss, holds the last real values for up to 10 s (5 polls), then substitutes dummy sentinel values.
 
 ### Chemistry profiles
 
-Selected by the analog level on the chemistry pin (0–7). All voltages in mV.
+Selected by the analog level on the chemistry pin (0–9). All voltages in mV.
 
-| #   | Chemistry   | Charge V | Cutoff | Reinstate |
-| --- | ----------- | -------- | ------ | --------- |
-| 0   | TrueDefault | 4100     | 3000   | 3200      |
-| 1   | Highest     | 4600     | —      | —         |
-| 2   | LiionLL     | 4100     | 3100   | 3400      |
-| 3   | Liion       | 4200     | 2900   | 3100      |
-| 4   | LiFePO4     | 3650     | 2500   | 2700      |
-| 5   | Sodium-ion  | 3900     | 1800   | 2000      |
-| 6   | LTO         | 2900     | —      | —         |
-| 7   | NiMH 3×     | 4500     | 2400   | 2600      |
+| #   | Chemistry           | Charge V | Cutoff | Reinstate |
+| --- | ------------------- | -------- | ------ | --------- |
+| 0   | TrueDefault         | 4100     | 3000   | 3200      |
+| 1   | Supercapacitor bank | 4600     | 1500   | 2000      |
+| 2   | LiionLL             | 4100     | 3100   | 3400      |
+| 3   | Liion               | 4200     | 2900   | 3100      |
+| 4   | LiFePO4             | 3650     | 2500   | 2700      |
+| 5   | Sodium-ion 3.9 V    | 3900     | 1500   | 2000      |
+| 6   | Sodium-ion 4.1 V    | 4100     | 1500   | 2000      |
+| 7   | LTO                 | 2800     | 1500   | 2000      |
+| 8   | NiMH 3×             | 4500     | 2400   | 2600      |
+| 9   | _(reserved)_        | 4100     | 3000   | 3200      |
 
-Profiles without cutoff (Highest, LTO) never assert the cutoff pin.
+Profiles without a meaningful cutoff (LTO, sodium-ion, supercapacitor bank) use 1500 mV / 2000 mV as a deep-discharge floor.
 
 ---
 
