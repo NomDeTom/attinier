@@ -4,7 +4,6 @@ ATtiny-based battery charger controller using the BQ25798. Three target builds a
 
 | Environment | Package | Flash | RAM   | Notes                                               |
 | ----------- | ------- | ----- | ----- | --------------------------------------------------- |
-| ATtiny412   | SOIC-8  | 4 KB  | 256 B | Minimal — cutoff + charger                          |
 | ATtiny816   | VQFN-20 | 8 KB  | 512 B | + INA3221 emulation, softstart, aux ADC             |
 | ATtiny1616  | VQFN-20 | 16 KB | 2 KB  | Same firmware as ATtiny816 without `attiny816` flag |
 
