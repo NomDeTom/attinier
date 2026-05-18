@@ -70,3 +70,22 @@ inline uint16_t readVcc() {
     return 3300; // fallback if ADC reads zero
   return static_cast<uint16_t>(1100UL * 1023UL / raw);
 }
+
+// Measure current through INA180A2 (50V/V gain) using a 10mOhm shunt and the 1.1v internal reference.
+// Returns current in mA.  Accuracy is limited by bandgap tolerance (~±3%).
+// 2mA per mV with 50V/V gain and 10mOhm shunt, so 1.1V range corresponds to 2-2200mA.
+// Note: the INA180A2 output is positive only - reverse current is ignored.
+inline int16_t readINA180A2Current(uint8_t adcPin) {
+  analogReference(INTERNAL1V1); // configure VREF module to 1.1V
+  uint16_t raw = analogRead(adcPin);
+  return static_cast<int16_t>((int32_t)raw * 2 * 1100 / 1023);
+}
+
+// Measure voltage across a resistor divider with 1:3 ratio (e.g. 10k and 30k) using the 1.1v internal reference.
+// Returns voltage in mV.  Accuracy is limited by bandgap tolerance (~±3%).
+// With 1:3 ratio, the divider output is 1/4 of the input
+inline int16_t readDividerVoltage(uint8_t adcPin) {
+  analogReference(INTERNAL1V1); // configure VREF module to 1.1V
+  uint16_t raw = analogRead(adcPin);
+  return static_cast<int16_t>((int32_t)raw * 4 * 1100 / 1023);
+}
