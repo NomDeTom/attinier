@@ -55,7 +55,7 @@ Bq25798 charger;
 #ifdef BQ25798_USE_SOFT_I2C
 SlowSoftI2CMaster chargerBus(kChargerI2cSdaPin, kChargerI2cSclPin, false);
 #endif
-BatteryChemistry      currentChemistry = BatteryChemistry::TrueDefault;
+BatteryChemistry      currentChemistry = BatteryChemistry::Lifepo4;
 const BatteryProfile *currentProfile   = nullptr;
 bool                  chargerPresent   = false;
 bool                  chargerEverSeen  = false;
@@ -142,12 +142,12 @@ constexpr uint8_t kAuxOversampleLog2 =
 
 #endif
 
-// Write charge voltage and cutoff/reinstate thresholds to the charger for the current profile.
+// Write charge voltage limit to the charger for the current profile.
 void configureBattery() {
   if (currentProfile == nullptr) {
     return;
   }
-  charger.writeRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, currentProfile->chargeReg);
+  charger.setChargeVoltageLimit(currentProfile->chargeReg);
 }
 
 bool readChargerAdc(uint8_t reg, uint16_t &out) {
@@ -161,19 +161,21 @@ bool readChargerAdc(uint8_t reg, uint16_t &out) {
 }
 
 uint8_t readChemistryLevel() {
-#if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
-  uint16_t vac1 = 0u;
-  uint16_t vac2 = 0u;
-  if (!chargerPresent || !readChargerAdc(BQ25798_REG_VAC1_ADC, vac1) ||
-      !readChargerAdc(BQ25798_REG_VAC2_ADC, vac2) || vac1 == 0u) {
-    return static_cast<uint8_t>(BatteryChemistry::TrueDefault);
-  }
-  const uint32_t scaled = static_cast<uint32_t>(vac2) * 7u + (vac1 / 2u);
-  const uint8_t  level  = static_cast<uint8_t>(scaled / vac1);
-  return (level > 7u) ? 7u : level;
-#else
-  return readVoltageLevel(A3);
-#endif
+// #if defined(__AVR_ATtiny412__) && defined(BQ25798_USE_SOFT_I2C)
+//   uint16_t vac1 = 0u;
+//   uint16_t vac2 = 0u;
+//   if (!chargerPresent || !readChargerAdc(BQ25798_REG_VAC1_ADC, vac1) ||
+//       !readChargerAdc(BQ25798_REG_VAC2_ADC, vac2) || vac1 == 0u) {
+//     return static_cast<uint8_t>(BatteryChemistry::TrueDefault);
+//   }
+//   const uint32_t scaled = static_cast<uint32_t>(vac2) * 7u + (vac1 / 2u);
+//   const uint8_t  level  = static_cast<uint8_t>(scaled / vac1);
+//   return (level > 7u) ? 7u : level;
+// #else
+//   return readVoltageLevel(A3);
+// #endif
+
+  return static_cast<uint8_t>(BatteryChemistry::Lifepo4);
 }
 
 bool beginCharger() {
@@ -361,12 +363,22 @@ void loop() {
     }
 
     if (chargerPresent) {
-      // CheckCharger: chain all calls — any failure marks charger lost for re-probe next poll.
-      const bool ok = charger.disableWatchdog() &&
-                      // Valid settings: BQ25798_VAC_OVP_26V, BQ25798_VAC_OVP_22V,
-                      //                 BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
-                      charger.setVacOvp(BQ25798_VAC_OVP_26V) && charger.enableMppt(true) &&
-                      charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000));
+      // CheckCharger: read each setting; write only if it differs from the target.
+      // Any I²C failure marks charger lost for re-probe next poll.
+      uint8_t           wdVal   = 0xFF;
+      bq25798_vac_ovp_t ovpVal  = BQ25798_VAC_OVP_7V;
+      bool              mpptVal = false;
+      uint8_t           vsysVal = 0xFF;
+      uint16_t          vcvVal  = 0xFFFF;
+      // Valid VAC OVP settings: BQ25798_VAC_OVP_26V, BQ25798_VAC_OVP_22V,
+      //                         BQ25798_VAC_OVP_12V, BQ25798_VAC_OVP_7V (default)
+      const bool ok =
+        charger.getWatchdog(wdVal)               && (wdVal   == 0x00                       || charger.setWatchdog(0x00))                                        &&
+        charger.getVacOvp(ovpVal)                && (ovpVal  == BQ25798_VAC_OVP_26V         || charger.setVacOvp(BQ25798_VAC_OVP_26V))                          &&
+        charger.getMpptEnabled(mpptVal)          && (mpptVal                                || charger.setMpptEnabled(true))                                     &&
+        charger.getMinimalSystemVoltage(vsysVal) && (vsysVal == BQ25798_VSYSMIN_MV(3000)   || charger.setMinimalSystemVoltage(BQ25798_VSYSMIN_MV(3000)))        &&
+        (currentProfile == nullptr ||
+         (charger.getChargeVoltageLimit(vcvVal)  && (vcvVal  == currentProfile->chargeReg  || charger.setChargeVoltageLimit(currentProfile->chargeReg))));
       if (!ok) {
         chargerPresent   = false;
         chargerLostPolls = 0; // reset counter so timeout counts from now

@@ -161,10 +161,10 @@ public:
       ok = wire_->i2c_write(reg);
     }
     if (ok) {
-      ok = wire_->i2c_write(static_cast<uint8_t>(value & 0xFFu));
+      ok = wire_->i2c_write(static_cast<uint8_t>((value >> 8) & 0xFFu));
     }
     if (ok) {
-      ok = wire_->i2c_write(static_cast<uint8_t>((value >> 8) & 0xFFu));
+      ok = wire_->i2c_write(static_cast<uint8_t>(value & 0xFFu));
     }
     wire_->i2c_stop();
     return ok;
@@ -175,8 +175,8 @@ public:
 
     wire_->beginTransmission(address_);
     wire_->write(reg);
-    wire_->write(static_cast<uint8_t>(value & 0xFF));
     wire_->write(static_cast<uint8_t>((value >> 8) & 0xFF));
+    wire_->write(static_cast<uint8_t>(value & 0xFF));
     return wire_->endTransmission() == 0;
 #endif
   }
@@ -208,35 +208,56 @@ public:
                            enabled ? static_cast<uint8_t>(1u << 7) : 0u);
   }
 
-  bool disableWatchdog() const {
-    // Bits 2:0 of CHARGER_CONTROL_1 control watchdog timer
-    // Set to 0x00 to disable
-    return updateRegister8(BQ25798_REG_CHARGER_CONTROL_1, 0x07, 0x00);
+  bool getWatchdog(uint8_t &val) const {
+    // Bits 2:0 of CHARGER_CONTROL_1 — watchdog timer (0x00 = disabled)
+    uint8_t reg = 0;
+    if (!readRegister8(BQ25798_REG_CHARGER_CONTROL_1, reg)) return false;
+    val = reg & 0x07;
+    return true;
+  }
+  bool setWatchdog(uint8_t val) const {
+    return updateRegister8(BQ25798_REG_CHARGER_CONTROL_1, 0x07, val & 0x07);
   }
 
+  bool getVacOvp(bq25798_vac_ovp_t &level) const {
+    // Bits 7:6 of CHARGER_CONTROL_1 — VAC overvoltage protection threshold
+    uint8_t reg = 0;
+    if (!readRegister8(BQ25798_REG_CHARGER_CONTROL_1, reg)) return false;
+    level = static_cast<bq25798_vac_ovp_t>((reg >> 6) & 0x03);
+    return true;
+  }
   bool setVacOvp(bq25798_vac_ovp_t level) const {
-    // Bits 7:6 of CHARGER_CONTROL_1 set VAC overvoltage protection threshold
     return updateRegister8(BQ25798_REG_CHARGER_CONTROL_1, 0xC0, static_cast<uint8_t>(level) << 6);
   }
 
-  bool enableMppt(bool enabled) const {
-    // Bit 0 of MPPT_CONTROL enables/disables MPPT function
+  bool getMpptEnabled(bool &enabled) const {
+    // Bit 0 of MPPT_CONTROL — MPPT enable
+    uint8_t reg = 0;
+    if (!readRegister8(BQ25798_REG_MPPT_CONTROL, reg)) return false;
+    enabled = (reg & BQ25798_MPPT_EN_BIT) != 0;
+    return true;
+  }
+  bool setMpptEnabled(bool enabled) const {
     return updateRegister8(BQ25798_REG_MPPT_CONTROL, BQ25798_MPPT_EN_BIT,
                            enabled ? BQ25798_MPPT_EN_BIT : 0u);
   }
 
-  bool setMinimalSystemVoltage(uint8_t value) const {
-    // Set VSYSMIN (bits 5:0 of REG00) only if different.
-    uint8_t current = 0;
-    if (!readRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, current)) {
-      return false;
-    }
-    // Check if bits 5:0 already match (ignore bits 7:6 which are reserved).
-    if ((current & 0x3F) == (value & 0x3F)) {
-      return true; // Already set correctly.
-    }
-    // Update: preserve reserved bits 7:6, write new bits 5:0.
-    return writeRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, (current & 0xC0) | (value & 0x3F));
+  bool getMinimalSystemVoltage(uint8_t &val) const {
+    // Bits 5:0 of REG00 — VSYSMIN
+    uint8_t reg = 0;
+    if (!readRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, reg)) return false;
+    val = reg & 0x3F;
+    return true;
+  }
+  bool setMinimalSystemVoltage(uint8_t val) const {
+    return updateRegister8(BQ25798_REG_MINIMAL_SYSTEM_VOLTAGE, 0x3F, val & 0x3F);
+  }
+
+  bool getChargeVoltageLimit(uint16_t &val) const {
+    return readRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, val);
+  }
+  bool setChargeVoltageLimit(uint16_t val) const {
+    return writeRegister16(BQ25798_REG_CHARGE_VOLTAGE_LIMIT, val);
   }
 
   bool readStatus(Status &status) const {
